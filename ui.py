@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 # 设置Streamlit主题 - 必须是第一个st命令
-st.set_page_config(layout="wide", page_title="AI代码审查平台", page_icon="🤖", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="ai-cr-lab", page_icon="🔬", initial_sidebar_state="expanded")
 
 import datetime
 import os
@@ -201,73 +201,87 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 自定义CSS样式
+# 自定义CSS样式（ai-cr-lab 品牌色：墨蓝 + 青绿）
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap');
+    html, body, [class*="css"] { font-family: "Outfit", "Source Han Sans CN", sans-serif; }
     .main {
-        background-color: #f0f2f6;
+        background:
+          radial-gradient(900px 420px at 0% 0%, rgba(61, 214, 198, 0.10), transparent 55%),
+          linear-gradient(180deg, #f4f7fb 0%, #eef3f8 100%);
         padding-top: 0rem;
     }
     .stButton>button {
-        background-color: #4CAF50;
+        background-color: #0f766e;
         color: white;
-        border-radius: 20px;
-        padding: 0.5rem 2rem;
+        border-radius: 10px;
+        padding: 0.5rem 1.4rem;
         border: none;
-        transition: all 0.3s ease;
+        transition: all 0.25s ease;
+        font-weight: 600;
     }
     .stButton>button:hover {
-        background-color: #45a049;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        color: #ffffff;  /* 设置悬停时的文字颜色为白色 */
+        background-color: #0d9488;
+        box-shadow: 0 4px 14px rgba(15, 118, 110, 0.25);
+        color: #ffffff;
     }
-
     .stTextInput>div>div>input {
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        border: 1px solid #c9d4e0;
+        border-radius: 8px;
         padding: 0.5rem;
     }
-    .stCheckbox>div>div>input {
-        accent-color: #4CAF50;
-    }
+    .stCheckbox>div>div>input { accent-color: #0f766e; }
     .stDataFrame {
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        border: 1px solid #d7e0ea;
+        border-radius: 10px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
-    .stMarkdown {font-size: 18px;}
+    .stMarkdown { font-size: 16px; }
     .login-title {
         text-align: center;
-        color: #2E4053;
-        margin: 0.5rem 0;
-        font-size: 2.2rem;
-        font-weight: bold;
+        color: #0c1222;
+        margin: 0.35rem 0 0.15rem;
+        font-size: 2.4rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+    }
+    .login-sub {
+        text-align: center;
+        color: #5b6b7c;
+        font-size: 0.95rem;
+        margin-bottom: 1rem;
     }
     .login-container {
-        background-color: white;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        background: rgba(255,255,255,0.92);
+        border: 1px solid #d7e0ea;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
         margin-top: 0rem;
+        padding: 0.5rem 0.25rem 1rem;
     }
-    .platform-icon {
-        font-size: 3.5rem;
-        margin-bottom: 0.5rem;
+    .platform-mark {
         text-align: center;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #0f766e;
+        margin-top: 0.75rem;
     }
-    /* Pro 版链接 - 与退出登录按钮同高同风格 */
     a.pro-link {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 0.5rem 2rem;
-        background: linear-gradient(135deg, #5b6bc0 0%, #7c4dff 100%);
-        color: #fff !important;
+        padding: 0.5rem 1.2rem;
+        background: #0c1222;
+        color: #e8eef8 !important;
         text-decoration: none;
-        border-radius: 20px;
-        font-size: 1rem;
-        font-weight: 500;
-        transition: all 0.3s ease;
+        border-radius: 10px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        transition: all 0.25s ease;
         border: none;
         box-sizing: border-box;
         min-height: 2.25rem;
@@ -275,7 +289,7 @@ st.markdown(
         white-space: nowrap;
     }
     a.pro-link:hover {
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        background: #1a2740;
         color: #fff !important;
     }
     .pro-link-wrap {
@@ -286,8 +300,43 @@ st.markdown(
         min-width: 0;
         overflow: hidden;
     }
-    .pro-link-wrap .pro-link {
-        max-width: 100%;
+    .pro-link-wrap .pro-link { max-width: 100%; }
+    .empty-panel {
+        margin: 0.75rem 0 1.25rem;
+        padding: 1.75rem 1.25rem;
+        border: 1px dashed #b7c5d4;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.7);
+        text-align: center;
+    }
+    .empty-panel h3 {
+        margin: 0 0 0.4rem;
+        color: #0c1222;
+        font-size: 1.15rem;
+        font-weight: 700;
+    }
+    .empty-panel p {
+        margin: 0;
+        color: #5b6b7c;
+        font-size: 0.95rem;
+        line-height: 1.5;
+    }
+    .dash-brand {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        margin: 0 0 0.35rem 0;
+    }
+    .dash-brand .name {
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        color: #0c1222;
+        line-height: 1.15;
+    }
+    .dash-brand .tag {
+        font-size: 0.82rem;
+        color: #5b6b7c;
     }
     </style>
     """,
@@ -301,8 +350,9 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
-        st.markdown('<div class="platform-icon">🤖</div>', unsafe_allow_html=True)
-        st.markdown('<h1 class="login-title">AI代码审查平台</h1>', unsafe_allow_html=True)
+        st.markdown('<div class="platform-mark">AI-CR-LAB</div>', unsafe_allow_html=True)
+        st.markdown('<h1 class="login-title">代码审查控制台</h1>', unsafe_allow_html=True)
+        st.markdown('<p class="login-sub">GitHub · JerryFish123/ai-cr-lab</p>', unsafe_allow_html=True)
 
         # 如果用户名和密码都为 'admin'，提示用户修改密码
         if DASHBOARD_USER == "admin" and DASHBOARD_PASSWORD == "admin":
@@ -524,7 +574,7 @@ def logout():
 
 
 # Pro 版文档链接（登录后展示）
-PRO_VERSION_URL = "https://github.com/sunmh207/AI-Codereview-Gitlab/blob/main/doc/pro.md"
+PRO_VERSION_URL = "https://github.com/JerryFish123/ai-cr-lab"
 
 
 # 主要内容
@@ -533,9 +583,10 @@ def main_page():
     head_left, head_right = st.columns([7.2, 2.8])
     with head_left:
         st.markdown(
-            '<style>.dash-heading-bar{margin:0 0 0.15rem 0;padding:0;line-height:1.2;} '
-            '.dash-heading-bar h4{margin:0;font-size:1rem;font-weight:600;}</style>'
-            '<div class="dash-heading-bar"><h4>📊 代码审查统计</h4></div>',
+            '<div class="dash-brand">'
+            '<div class="name">ai-cr-lab</div>'
+            '<div class="tag">代码审查统计 · JerryFish123/ai-cr-lab</div>'
+            '</div>',
             unsafe_allow_html=True,
         )
     with head_right:
@@ -547,7 +598,7 @@ def main_page():
         with sub_col_pro:
             st.markdown(
                 '<div class="pro-link-wrap">'
-                '<a href="' + PRO_VERSION_URL + '" target="_blank" rel="noopener noreferrer" class="pro-link">开源版 VS Pro 版</a>'
+                '<a href="' + PRO_VERSION_URL + '" target="_blank" rel="noopener noreferrer" class="pro-link">GitHub 仓库</a>'
                 '</div>',
                 unsafe_allow_html=True
             )
@@ -590,11 +641,21 @@ def main_page():
                             updated_at_lte=int(end_datetime.timestamp()), columns=columns)
             df = pd.DataFrame(data)
 
-            st.data_editor(
-                df,
-                use_container_width=True,
-                column_config=column_config
-            )
+            if df.empty:
+                st.markdown(
+                    '<div class="empty-panel">'
+                    "<h3>暂无审查记录</h3>"
+                    "<p>在业务仓库配置 Webhook 指向 "
+                    "<code>/review/webhook</code> 后，合并请求或推送产生的审查会显示在这里。</p>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.data_editor(
+                    df,
+                    use_container_width=True,
+                    column_config=column_config
+                )
 
             total_records = len(df)
             average_score = df["score"].mean() if not df.empty else 0
