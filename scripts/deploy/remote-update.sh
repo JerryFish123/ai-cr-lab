@@ -16,7 +16,32 @@ if [ ! -f conf/.env ]; then
   exit 1
 fi
 
-git fetch --prune "$REMOTE" "$BRANCH"
+# 国内 ECS 直连 GitHub 偶发 Empty reply：带重试；失败则尝试 ghproxy 镜像拉取
+fetch_ok=0
+for attempt in 1 2 3; do
+  if git fetch --prune "$REMOTE" "$BRANCH"; then
+    fetch_ok=1
+    break
+  fi
+  echo "[deploy] git fetch 失败 (attempt=$attempt)，3s 后重试…"
+  sleep 3
+done
+
+if [ "$fetch_ok" -ne 1 ]; then
+  ORIGIN_URL="$(git remote get-url "$REMOTE")"
+  case "$ORIGIN_URL" in
+    https://github.com/*)
+      MIRROR_URL="https://ghproxy.net/${ORIGIN_URL}"
+      echo "[deploy] 改用镜像拉取: $MIRROR_URL"
+      git fetch --prune "$MIRROR_URL" "+refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}"
+      ;;
+    *)
+      echo "[deploy] ERROR: git fetch 失败且无法推断镜像 URL: $ORIGIN_URL"
+      exit 1
+      ;;
+  esac
+fi
+
 git checkout "$BRANCH"
 git reset --hard "$REMOTE/$BRANCH"
 
