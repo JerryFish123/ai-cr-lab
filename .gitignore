@@ -1,16 +1,11 @@
 .DS_Store
 venv/
 .venv/
+env/
+.test/
 test/
 .idea/
-
-log/*
-!log/.gitkeep
-data/*
-!data/.gitkeep
-
-conf/.env
-.pyc
+*.pyc
 __pycache__/
 .agents/
 .cursorignore
@@ -18,9 +13,24 @@ __pycache__/
 .claude/
 openspec/
 
-# Agentic mode local repo cache
+# Secrets & local env (keep only *.dist templates tracked)
+conf/.env
+.env
+.env.*
+!.env.dist
+!conf/.env.dist
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# Runtime artifacts
+log/*
+!log/.gitkeep
+data/*
+!data/.gitkeep
 data/repo_cache/
 
-# Test coverage artifact
+# Test / coverage
 .coverage
 .pytest_cache/

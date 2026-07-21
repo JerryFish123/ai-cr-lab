@@ -1,237 +1,63 @@
-![Push图片](doc/img/open/ai-codereview-cartoon.png)
+# ai-cr-lab
 
-[开源版](README.md) | 
-[Pro版](doc/pro.md)
+基于大模型的 **AI Code Review** 实验项目。  
+当仓库发生 Push / Pull Request（或 Merge Request）时，自动拉取变更、调用 LLM 审查，并把结果回写到 PR/Commit 评论；可选推送到钉钉等 IM。
 
-## 项目简介
+> 远程仓库：[JerryFish123/ai-cr-lab](https://github.com/JerryFish123/ai-cr-lab)
 
-本项目是一个基于大模型的自动化代码审查工具，帮助开发团队在代码合并或提交时，快速进行智能化的审查(Code Review)，提升代码质量和开发效率。
+## 能做什么
 
-## 功能
-
-- 🚀 多模型支持
-  - 兼容 DeepSeek、ZhipuAI、OpenAI、Anthropic、通义千问 和 Ollama，想用哪个就用哪个。
-- 📢 消息即时推送
-  - 审查结果一键直达 钉钉、企业微信 或 飞书，代码问题无处可藏！
-- 📅 自动化日报生成
-  - 基于 GitLab & GitHub & Gitea Commit 记录，自动整理每日开发进展，谁在摸鱼、谁在卷，一目了然 😼。
-- 📊 可视化 Dashboard
-  - 集中展示所有 Code Review 记录，项目统计、开发者统计，数据说话，甩锅无门！
-- 🎭 Review Style 任你选
-  - 专业型 🤵：严谨细致，正式专业。
-  - 讽刺型 😈：毒舌吐槽，专治不服（"这代码是用脚写的吗？"）
-  - 绅士型 🌸：温柔建议，如沐春风（"或许这里可以再优化一下呢~"）
-  - 幽默型 🤪：搞笑点评，快乐改码（"这段 if-else 比我的相亲经历还曲折！"）
-- 🤖 Agentic Review 模式（可选）
-  - LLM 拥有工具调用能力（`read_file` / 沙箱 `run_command`），
-    可在本地克隆的代码库内自主探索，产出更全面的 review 结果。
-  - shell 默认仅允许读类命令（`ls` / `cat` / `grep` / `find` / `git log` …），
-    沙箱 + 路径越界 + 30s 超时三重防护。
-  - 任意阶段失败（clone / fetch / LLM / 工具调用）自动降级回 `diff_only`，
-    保证至少返回与原版一致的 review。
-  - 详细配置与开销说明见下方 [Agentic Review Mode](#agentic-review-mode-可选)
-
-**效果图:**
-
-![MR图片](doc/img/open/mr.png)
-
-![Note图片](doc/img/open/note.jpg)
-
-![Dashboard图片](doc/img/open/dashboard.jpg)
+- 接入 **GitHub / GitLab / Gitea** Webhook
+- 多模型：OpenAI 兼容接口（如火山方舟）、DeepSeek、Anthropic、通义、Ollama 等
+- 审查策略：
+  - `diff_only`：只审 diff（默认，成本低）
+  - `agentic`：克隆仓库后工具探索（`read_file` / 沙箱命令），失败自动降级
+- 审查风格：专业 / 讽刺 / 绅士 / 幽默
+- IM 通知：钉钉 / 企业微信 / 飞书
+- Dashboard：审查记录与简单统计（Streamlit）
 
 ## 原理
 
-当用户在 GitLab 上提交代码（如 Merge Request 或 Push 操作）时，GitLab 将自动触发 webhook
-事件，调用本系统的接口。系统随后通过第三方大模型对代码进行审查，并将审查结果直接反馈到对应的 Merge Request 或 Commit 的
-Note 中，便于团队查看和处理。
-
-![流程图](doc/img/open/process.png)
-
-## 部署
-
-### 方案一：Docker 部署
-
-**1. 准备环境文件**
-
-- 克隆项目仓库：
-```aiignore
-git clone https://github.com/sunmh207/AI-Codereview-Gitlab.git
-cd AI-Codereview-Gitlab
+```text
+Git 平台事件（Push / PR / MR）
+  → Webhook POST /review/webhook
+  → 异步 Worker 拉 diff
+  → LLM 生成审查报告（含总分）
+  → 回写评论 +（可选）IM 通知 + 落库
 ```
 
-- 创建配置文件：
-```aiignore
-cp conf/.env.dist conf/.env
-```
+## 本地快速启动
 
-- 编辑 conf/.env 文件，配置以下关键参数：
+1. 准备 `conf/.env`（可从 `conf/.env.dist` 复制）
+2. Python **3.10+**，建议虚拟环境：
 
 ```bash
-#大模型供应商配置,支持 zhipuai , openai , deepseek 和 ollama
-LLM_PROVIDER=deepseek
-
-#DeepSeek
-DEEPSEEK_API_KEY={YOUR_DEEPSEEK_API_KEY}
-
-#支持review的文件类型(未配置的文件类型不会被审查)
-SUPPORTED_EXTENSIONS=.java,.py,.php,.yml,.vue,.go,.c,.cpp,.h,.js,.css,.md,.sql
-
-#钉钉消息推送: 0不发送钉钉消息,1发送钉钉消息
-DINGTALK_ENABLED=0
-DINGTALK_WEBHOOK_URL={YOUR_WDINGTALK_WEBHOOK_URL}
-
-#Gitlab配置
-GITLAB_ACCESS_TOKEN={YOUR_GITLAB_ACCESS_TOKEN}
-```
-
-**2. 启动服务**
-
-```bash
-docker-compose up -d
-```
-
-**3. 验证部署**
-
-- 主服务验证：
-  - 访问 http://your-server-ip:5001
-  - 显示 "The code review server is running." 说明服务启动成功。
-- Dashboard 验证：
-  - 访问 http://your-server-ip:5002
-  - 看到一个审查日志页面，说明 Dashboard 启动成功。
-
-### 方案二：本地Python环境部署
-
-**1. 获取源码**
-
-```bash
-git clone https://github.com/sunmh207/AI-Codereview-Gitlab.git
-cd AI-Codereview-Gitlab
-```
-
-**2. 安装依赖**
-
-使用 Python 环境（建议使用虚拟环境 venv）安装项目依赖(Python 版本：3.10+):
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-**3. 配置环境变量**
-
-同 Docker 部署方案中的.env 文件配置。
-
-**4. 启动服务**
-
-- 启动API服务：
-
-```bash
 python api.py
 ```
 
-- 启动Dashboard服务：
+3. 浏览器打开 API：`http://127.0.0.1:5001`  
+4. 将 GitHub Webhook 指向公网可达地址：`https://<你的域名或隧道>/review/webhook`  
+   （本机演示需隧道或云服务器；GitHub 无法直接访问 `127.0.0.1`）
 
-```bash
-streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
-```
+## 配置要点
 
-### 配置 GitLab Webhook
+| 配置项 | 说明 |
+|--------|------|
+| `LLM_PROVIDER` | 如 `openai`（可接火山方舟 OpenAI 兼容 Base URL） |
+| `GITHUB_ACCESS_TOKEN` / `GITLAB_ACCESS_TOKEN` | 读 diff、写评论 |
+| `REVIEW_STRATEGY` | `diff_only` 或 `agentic` |
+| `DINGTALK_*` | 可选，群机器人通知 |
 
-#### 1. 创建Access Token
+密钥只放在本地 `conf/.env`，**不要提交到 Git**。
 
-方法一：在 GitLab 个人设置中，创建一个 Personal Access Token。
+## 项目定位
 
-方法二：在 GitLab 项目设置中，创建Project Access Token
+本仓库用于作品集与工程实验：验证「变更进入仓库 → AI 审查生效」的完整闭环。  
+企业平台化叙事（如百炼工作流）与本仓库演示职责区分，避免混为一谈。
 
-#### 2. 配置 Webhook
+## 致谢
 
-在 GitLab 项目设置中，配置 Webhook：
-
-- URL：http://{your-server-ip}:5001/review/webhook
-- Trigger Events：勾选 Push Events 和 Merge Request Events (不要勾选其它Event)
-- Secret Token：上面配置的 Access Token(可选)
-
-**备注**
-
-1. Token使用优先级
-  - 系统优先使用 .env 文件中的 GITLAB_ACCESS_TOKEN。
-  - 如果 .env 文件中没有配置 GITLAB_ACCESS_TOKEN，则使用 Webhook 传递的Secret Token。
-2. 网络访问要求
-  - 请确保 GitLab 能够访问本系统。
-  - 若内网环境受限，建议将系统部署在外网服务器上。
-
-### 配置消息推送
-
-#### 1.配置钉钉推送
-
-- 在钉钉群中添加一个自定义机器人，获取 Webhook URL。
-- 更新 .env 中的配置：
-  ```
-  #钉钉配置
-  DINGTALK_ENABLED=1  #0不发送钉钉消息，1发送钉钉消息
-  DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=xxx #替换为你的Webhook URL
-  ```
-
-企业微信和飞书推送配置类似，具体参见 [常见问题](doc/faq.md)
-
-## Agentic Review Mode (可选)
-
-`REVIEW_STRATEGY` 环境变量切换两种 review 策略：
-
-- `diff_only`（默认）：仅对 diff 做 review，行为与原版完全一致。
-- `agentic`：LLM 拥有工具调用能力（read_file / 沙箱 shell），
-  可在本地克隆的代码库内自主探索，产出更全面的 review 结果。
-
-启用 agentic 模式：
-
-```bash
-REVIEW_STRATEGY=agentic
-REPO_CACHE_DIR=/var/data/repo_cache   # 可选，默认 data/repo_cache/
-AGENT_MAX_ITERATIONS=20               # 可选，默认 20
-```
-
-agentic 模式会按需在 `REPO_CACHE_DIR` 下克隆/更新目标项目（约 10MB~2GB / 项目）。
-任意阶段失败（clone / fetch / LLM / 工具调用异常）都会自动降级回 `diff_only`，
-保证至少返回与原版一致的 review。
-
-agentic 模式的额外开销：
-
-- 磁盘：建议预留 ≥ 50GB
-- 内存：单次 session 峰值 ~500MB
-- Token：单次 review 平均 5k - 50k tokens（diff_only 的 3 - 10 倍）
-- 时延：30s~5min / review
-
-⚠️ shell 工具有沙箱（命令白名单 + 黑名单 + 路径越界检查 + 30s 超时），
-默认只允许读类命令；如需放开请通过 `AGENT_SHELL_ALLOWLIST` / `AGENT_SHELL_BLOCKLIST` 调整。
-
-## 常见问题
-
-参见 [常见问题](doc/faq.md)
-
-## 相关项目
-
-### 1. Code Review Pro 版
-
-功能更丰富的 AI Code Review 版本。
-
-项目介绍与使用说明：[Code Review Pro 版](doc/pro.md)
-
-快速安装命令：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sunmh207/AI-Codereview-Gitlab/refs/heads/main/scripts/pro/install.sh | bash
-```
-
-### 2. Entire Dashboard
-
-如果你正在使用 AI Agent 开发工具 (如: Cursor、Claude Code、Codex ...)，并希望对人机交互过程进行全面的记录与回溯分析，推荐使用 [Entire Dashboard](https://github.com/sunmh207/entire-dashboard)。该项目提供了完整的人机交互记录与可视化分析功能，可帮助你深入理解 AI Agent 的使用模式，优化交互体验，提升开发效率。
-
-## 交流
-
-若本项目对您有帮助，欢迎 Star ⭐️ 或 Fork。 有任何问题或建议，欢迎提交 Issue 或 PR。
-
-也欢迎加微信/微信群，一起交流学习。
-
-<p float="left">
-  <img src="doc/img/open/wechat.jpg" width="400" />
-  <img src="doc/img/open/wechat_group.jpg" width="400" /> 
-</p>
+实现参考并演进自开源项目 [AI-Codereview-Gitlab](https://github.com/sunmh207/AI-Codereview-Gitlab)。
