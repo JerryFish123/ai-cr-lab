@@ -1,5 +1,7 @@
-# 推送到 publish 分支 → SSH 到 ECS → git pull + docker compose 重建
-# 所需 GitHub Secrets：ECS_HOST / ECS_USER / ECS_SSH_KEY / ECS_DEPLOY_PATH（可选）
+# 推送到 publish → SSH 到 ECS → 写入 Secrets 中的 .env → 重建服务
+# GitHub Secrets（Repository secrets）:
+#   ECS_HOST / ECS_USER / ECS_SSH_KEY  — 部署通道
+#   APP_ENV_FILE                       — 完整 conf/.env 文件内容（多行）
 name: Deploy publish → ECS
 
 on:
@@ -18,18 +20,28 @@ jobs:
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_ENV_FILE: ${{ secrets.APP_ENV_FILE }}
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
           port: 22
           command_timeout: 25m
+          envs: APP_ENV_FILE
           script: |
             set -euo pipefail
             DEPLOY_PATH="/opt/ai-cr-lab"
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
-              echo "ERROR: $DEPLOY_PATH 尚未初始化。请先在 ECS 上执行 scripts/deploy/ecs-bootstrap.sh"
+              echo "ERROR: $DEPLOY_PATH 尚未初始化。请先在 ECS 执行 scripts/deploy/ecs-bootstrap.sh"
               exit 1
             fi
             cd "$DEPLOY_PATH"
+            if [ -z "${APP_ENV_FILE:-}" ]; then
+              echo "ERROR: GitHub Secret APP_ENV_FILE 为空"
+              exit 1
+            fi
+            umask 077
+            printf '%s\n' "$APP_ENV_FILE" > conf/.env
+            chmod 600 conf/.env
             bash scripts/deploy/remote-update.sh

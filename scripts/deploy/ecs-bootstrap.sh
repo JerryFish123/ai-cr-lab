@@ -14,12 +14,37 @@ if ! command -v docker >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
     sudo apt-get install -y ca-certificates curl git
-    curl -fsSL https://get.docker.com | sudo sh
-    sudo usermod -aG docker "$USER" || true
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y curl git ca-certificates
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y curl git ca-certificates
   else
-    echo "[bootstrap] 请手动安装 Docker 后重试"
+    echo "[bootstrap] 未识别包管理器，请手动安装 Docker 后重试"
     exit 1
   fi
+  if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+    # 国内 ECS：优先阿里云 Docker CE 源（get.docker.com 常不可达）
+    sudo dnf config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo 2>/dev/null \
+      || sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+      || sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin \
+      || curl -fsSL https://get.docker.com | sudo sh
+  else
+    curl -fsSL https://get.docker.com | sudo sh
+  fi
+  sudo mkdir -p /etc/docker
+  if [ ! -f /etc/docker/daemon.json ]; then
+    sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://mirror.ccs.tencentyun.com"
+  ]
+}
+EOF
+  fi
+  sudo systemctl enable --now docker || true
+  sudo usermod -aG docker "$USER" || true
 fi
 
 echo "[bootstrap] clone/update repo → $DEPLOY_PATH"

@@ -72,10 +72,17 @@ ssh -i ~/.ssh/ai_cr_lab_deploy root@<ECS公网IP> 'echo ok'
 
 | Name | Value |
 |------|--------|
-| `ECS_HOST` | ECS 公网 IP |
-| `ECS_USER` | 如 `root` 或 `ecs-user` |
-| `ECS_SSH_KEY` | **私钥**全文（`~/.ssh/ai_cr_lab_deploy` 文件内容，含 `BEGIN`/`END`） |
-| （部署路径固定） | 服务器目录：`/opt/ai-cr-lab`（与 workflow 一致） |
+| `ECS_HOST` | ECS 公网 IP，例如 `39.96.125.66` |
+| `ECS_USER` | `root` |
+| `ECS_SSH_KEY` | 部署用 **私钥**全文（`~/.ssh/ai_cr_lab_deploy`，含 `BEGIN`/`END`） |
+| `APP_ENV_FILE` | **整个** `conf/.env` 文件内容（多行粘贴；含 LLM/GitHub Token/钉钉等） |
+
+说明：
+
+- **Secrets** 放敏感信息（上表全部用 Secrets，不要用 Variables）
+- **Variables** 仅适合非敏感项（本项目可不建）
+- 每次 push `publish` 时，Actions 会把 `APP_ENV_FILE` 写到服务器 `/opt/ai-cr-lab/conf/.env` 再重建容器
+- 部署路径固定：`/opt/ai-cr-lab`
 
 ---
 
