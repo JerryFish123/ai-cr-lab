@@ -53,6 +53,12 @@ python api.py
 
 密钥只放在本地 `conf/.env`，**不要提交到 Git**。
 
+## 部署到阿里云 ECS（`publish` 一键更新）
+
+推送到 **`publish`** 分支后，GitHub Actions 会 SSH 到已有 ECS，自动 `git pull` + `docker compose up -d --build`。
+
+完整步骤见：[doc/deploy-ecs.md](doc/deploy-ecs.md)
+
 ## 项目定位
 
 本仓库用于作品集与工程实验：验证「变更进入仓库 → AI 审查生效」的完整闭环。  

@@ -1,0 +1,35 @@
+# 推送到 publish 分支 → SSH 到 ECS → git pull + docker compose 重建
+# 所需 GitHub Secrets：ECS_HOST / ECS_USER / ECS_SSH_KEY / ECS_DEPLOY_PATH（可选）
+name: Deploy publish → ECS
+
+on:
+  push:
+    branches: [publish]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-publish-ecs
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          command_timeout: 25m
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="/opt/ai-cr-lab"
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              echo "ERROR: $DEPLOY_PATH 尚未初始化。请先在 ECS 上执行 scripts/deploy/ecs-bootstrap.sh"
+              exit 1
+            fi
+            cd "$DEPLOY_PATH"
+            bash scripts/deploy/remote-update.sh
