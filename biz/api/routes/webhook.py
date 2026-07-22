@@ -61,6 +61,10 @@ def handle_github_webhook(event_type, data):
     logger.info(f'Received GitHub event: {event_type}')
     logger.info(f'Payload: {json.dumps(data)}')
 
+    # GitHub 创建/测试 Webhook 会发 ping；必须 200，否则列表会一直显示红叉
+    if event_type == "ping":
+        return jsonify({'message': 'pong'}), 200
+
     if event_type == "pull_request":
         # 使用handle_queue进行异步处理
         handle_queue(handle_github_pull_request_event, data, github_token, github_url, github_url_slug)
@@ -74,9 +78,9 @@ def handle_github_webhook(event_type, data):
         return jsonify(
             {'message': f'GitHub request received(event_type={event_type}), will process asynchronously.'}), 200
     else:
-        error_message = f'Only pull_request and push events are supported for GitHub webhook, but received: {event_type}.'
-        logger.error(error_message)
-        return jsonify(error_message), 400
+        # 未订阅的事件类型：仍返回 200，避免 GitHub 标红；真正处理的仍是 PR/push
+        logger.info('Ignoring unsupported GitHub event_type=%s', event_type)
+        return jsonify({'message': f'Ignored event_type={event_type}'}), 200
 
 
 def handle_gitlab_webhook(data):
