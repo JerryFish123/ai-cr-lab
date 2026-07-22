@@ -4,7 +4,7 @@ These tests run against a real local git remote (no mocking of RepoSyncer)
 with a mock LLM client. They exercise the full pipeline:
   LocalRepoSyncer -> AgentRunner -> LLMAdapter -> mock BaseClient.
 
-Test 2 also exercises the soft-degrade path when AgentRunner raises.
+Test 2 exercises failure when AgentRunner raises (notify + no diff_only fallback).
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ import pytest
 from biz.agent.agentic_reviewer import AgenticReviewer
 from biz.agent.llm_adapter import LLMAdapter
 from biz.agent.runner import TokenBudgetExceeded
-from biz.utils.code_reviewer import CodeReviewer
 
 
 @pytest.fixture
@@ -66,25 +65,14 @@ class TestEndToEndAgentic:
         assert (cache / "int_proj").exists()
         assert mock_client.chat_with_tools.called
 
-    def test_agentic_reviewer_degrades_when_runner_raises(self, tmp_path, tiny_remote, monkeypatch):
-        # CodeReviewer's __init__ calls Factory().getClient(); use ollama so it
-        # doesn't require API keys. The patched review_and_strip_code short-
-        # circuits any real network call anyway.
+    def test_agentic_reviewer_raises_when_runner_raises(self, tmp_path, tiny_remote, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "ollama")
         cache = tmp_path / "cache"
 
         mock_client = MagicMock()
-        mock_client.chat_with_tools.return_value = {
-            "content": "ignored",
-            "tool_calls": [],
-            "raw": None,
-        }
         adapter = LLMAdapter(mock_client, use_native=True)
 
-        with patch("biz.agent.agentic_reviewer.AgentRunner") as MockRunner, \
-                patch.object(
-                    CodeReviewer, "review_and_strip_code", return_value="DEGRADED 总分:50分"
-                ):
+        with patch("biz.agent.agentic_reviewer.AgentRunner") as MockRunner:
             mock_instance = MagicMock()
             mock_instance.run.side_effect = TokenBudgetExceeded("over")
             MockRunner.return_value = mock_instance
@@ -97,6 +85,7 @@ class TestEndToEndAgentic:
                 adapter=adapter,
                 max_iterations=3,
             )
-            result = reviewer.review(diffs_text="d", commits_text="c")
-
-        assert "DEGRADED" in result
+            with patch("biz.agent.agentic_reviewer.notifier.send_notification"):
+                from biz.agent.agentic_reviewer import AgenticReviewError
+                with pytest.raises(AgenticReviewError, match="Agent 运行失败"):
+                    reviewer.review(diffs_text="d", commits_text="c")

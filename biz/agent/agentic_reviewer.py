@@ -26,6 +26,30 @@ from biz.utils.im import notifier
 _REVIEW_SCORE_RE = re.compile(r"总分[:：]\s*(\d+)分?")
 
 
+class AgenticReviewError(RuntimeError):
+    """Agentic review failed; do not fall back to diff_only."""
+
+
+def _fail_agentic(reason: str, *, project: str = "", ref: str = "") -> None:
+    """Notify DingTalk (via notifier) and raise — no silent diff_only fallback."""
+    detail = f"[agentic 失败] {reason}"
+    if project:
+        detail += f"\nproject: {project}"
+    if ref:
+        detail += f"\nref: {ref}"
+    logger.error(detail.replace("\n", " | "))
+    try:
+        notifier.send_notification(
+            content=detail,
+            msg_type="markdown",
+            title="Agentic Review 失败",
+            project_name=project or None,
+        )
+    except Exception as notify_err:
+        logger.error("failed to send agentic failure notification: %s", notify_err)
+    raise AgenticReviewError(detail)
+
+
 def _slugify_repo_key(provider: str, project: str) -> str:
     """Build a stable cache key for a project."""
     return f"{provider}_{project}".replace("/", "_").replace(" ", "_")
@@ -128,9 +152,11 @@ class AgenticReviewer:
             syncer = LocalRepoSyncer(cache_root=self.cache_root)
             repo_root = syncer.sync_to(url=self.repo_url, key=self.repo_key, ref=self.ref)
         except Exception as e:
-            logger.error("agentic repo sync failed, degrading: %s", e)
-            notifier.send_notification(content=f"[agentic] repo sync failed: {e}; falling back to diff_only")
-            return CodeReviewer().review_and_strip_code(diffs_text, commits_text)
+            _fail_agentic(
+                f"仓库同步失败: {e}",
+                project=self.repo_key,
+                ref=self.ref,
+            )
 
         # 2. Build adapter, registry, runner.
         adapter = self._build_adapter()
@@ -151,33 +177,25 @@ class AgenticReviewer:
         )
         messages = [prompts["system_message"], {"role": "user", "content": user_content}]
 
-        # 4. Run the agent loop with soft-degrade; collect metadata for logging.
+        # 4. Run the agent loop — failures notify DingTalk and abort (no diff_only).
         run_meta: dict[str, Any] = {}
-        result: str
-        degraded = False
         try:
             result = runner.run(messages, out=run_meta)
         except Exception as e:
-            logger.error("agentic run failed, degrading to diff_only: %s", e)
-            notifier.send_notification(content=f"[agentic] run failed: {e}; falling back to diff_only")
-            degraded = True
-            result = CodeReviewer().review_and_strip_code(diffs_text, commits_text)
+            _fail_agentic(
+                f"Agent 运行失败: {e}",
+                project=self.repo_key,
+                ref=self.ref,
+            )
 
-        # 4b. Defense-in-depth: if the agent's text doesn't look like a review
-        # (missing the `总分:XX分` marker), treat the leak as a failure and
-        # fall back to diff_only. Otherwise the agent's tool-selection
-        # reasoning — e.g. "AST query doesn't find references, let me check
-        # the openspec folder" — would be posted to GitLab as a "review".
-        if not degraded and not _looks_like_review(result):
-            logger.warning(
-                "agent output missing 总分 marker (len=%d), degrading to diff_only",
-                len(result or ""),
+        # 4b. Defense-in-depth: missing `总分:XX分` means leaked reasoning, not a review.
+        if not _looks_like_review(result):
+            preview = (result or "")[:240].replace("\n", " ")
+            _fail_agentic(
+                f"输出缺少「总分」标记，疑似非审查结果（len={len(result or '')}）: {preview}",
+                project=self.repo_key,
+                ref=self.ref,
             )
-            notifier.send_notification(
-                content="[agentic] output missing 总分 marker; falling back to diff_only"
-            )
-            degraded = True
-            result = CodeReviewer().review_and_strip_code(diffs_text, commits_text)
 
         # 5. Emit structured per-review log line.
         run_messages = run_meta.get("messages", messages)
@@ -191,7 +209,7 @@ class AgenticReviewer:
             duration_ms=int((time.monotonic() - start) * 1000),
             review_result_length=len(result),
             score=CodeReviewer.parse_review_score(review_text=result),
-            degraded=degraded,
+            degraded=False,
             tool_calls=_collect_tool_calls(run_messages),
         )
         logger.info(json.dumps(asdict(log_entry), ensure_ascii=False))

@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from biz.agent.agentic_reviewer import AgenticReviewError
 from biz.queue.worker import _review_with_strategy
 
 
@@ -37,18 +38,29 @@ class TestWebhookStrategy:
 
     def test_agentic_branch_routes_to_reviewer(self, monkeypatch):
         monkeypatch.setenv("REVIEW_STRATEGY", "agentic")
-        with patch("biz.queue.worker.CodeReviewer") as MockCR:
-            MockCR.return_value.review_and_strip_code.return_value = "DIFF_ONLY_FALLBACK"
-            with patch("biz.agent.agentic_reviewer.AgenticReviewer") as MockAR:
-                MockAR.return_value.review.return_value = "AGENTIC_OK"
-                out = _review_with_strategy(
-                    changes=["+ x"],
-                    commits_text="c",
-                    webhook_data=GL_PAYLOAD,
-                    gitlab_url="http://x",
-                )
-                assert out == "AGENTIC_OK"
-                MockAR.assert_called_once()
+        with patch("biz.agent.agentic_reviewer.AgenticReviewer") as MockAR:
+            MockAR.return_value.review.return_value = "AGENTIC_OK"
+            out = _review_with_strategy(
+                changes=["+ x"],
+                commits_text="c",
+                webhook_data=GL_PAYLOAD,
+                gitlab_url="http://x",
+            )
+            assert out == "AGENTIC_OK"
+            MockAR.assert_called_once()
+
+    def test_agentic_resolve_failure_raises_no_diff_fallback(self, monkeypatch):
+        monkeypatch.setenv("REVIEW_STRATEGY", "agentic")
+        with patch("biz.queue.worker._resolve_repo_for_event", return_value=(None, None, None)):
+            with patch("biz.agent.agentic_reviewer.notifier.send_notification") as mock_notify:
+                with pytest.raises(AgenticReviewError, match="无法从 webhook 解析"):
+                    _review_with_strategy(
+                        changes=["+ x"],
+                        commits_text="c",
+                        webhook_data=GL_PAYLOAD,
+                        gitlab_url="http://x",
+                    )
+            mock_notify.assert_called_once()
 
 
 GL_PUSH_PAYLOAD = {
@@ -75,20 +87,18 @@ class TestGitLabPushAgentic:
         fields (object_attributes.source_branch / last_commit.id).
         """
         monkeypatch.setenv("REVIEW_STRATEGY", "agentic")
-        with patch("biz.queue.worker.CodeReviewer") as MockCR:
-            MockCR.return_value.review_and_strip_code.return_value = "DIFF_ONLY_FALLBACK"
-            with patch("biz.agent.agentic_reviewer.AgenticReviewer") as MockAR:
-                MockAR.return_value.review.return_value = "AGENTIC_OK"
-                out = _review_with_strategy(
-                    changes=["+ x"],
-                    commits_text="c",
-                    webhook_data=GL_PUSH_PAYLOAD,
-                    gitlab_url="http://x",
-                )
-                assert out == "AGENTIC_OK", "expected agentic routing, not diff_only fallback"
-                MockAR.assert_called_once_with(
-                    repo_url="http://x/g/p.git",
-                    repo_key="g/p",
-                    ref="abcdef1234567890",
-                    cache_root="data/repo_cache",
-                )
+        with patch("biz.agent.agentic_reviewer.AgenticReviewer") as MockAR:
+            MockAR.return_value.review.return_value = "AGENTIC_OK"
+            out = _review_with_strategy(
+                changes=["+ x"],
+                commits_text="c",
+                webhook_data=GL_PUSH_PAYLOAD,
+                gitlab_url="http://x",
+            )
+            assert out == "AGENTIC_OK", "expected agentic routing, not diff_only fallback"
+            MockAR.assert_called_once_with(
+                repo_url="http://x/g/p.git",
+                repo_key="g/p",
+                ref="abcdef1234567890",
+                cache_root="data/repo_cache",
+            )

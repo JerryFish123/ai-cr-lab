@@ -9,6 +9,7 @@ from biz.platforms.github.webhook_handler import filter_changes as filter_github
 from biz.platforms.gitea.webhook_handler import filter_changes as filter_gitea_changes, PullRequestHandler as GiteaPullRequestHandler, \
     PushHandler as GiteaPushHandler
 from biz.service.review_service import ReviewService
+from biz.agent.agentic_reviewer import AgenticReviewError
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.log import logger
@@ -67,12 +68,15 @@ def _review_with_strategy(changes: list, commits_text: str, webhook_data: dict, 
     if strategy != "agentic":
         return CodeReviewer().review_and_strip_code(str(changes), commits_text)
 
-    # Agentic mode.
-    from biz.agent.agentic_reviewer import AgenticReviewer
+    # Agentic mode — failures notify DingTalk and raise (no diff_only fallback).
+    from biz.agent.agentic_reviewer import AgenticReviewer, _fail_agentic
     repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, gitlab_url)
     if not (repo_url and repo_key and ref):
-        logger.warning("could not resolve repo info for agentic mode, falling back to diff_only")
-        return CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        _fail_agentic(
+            "无法从 webhook 解析仓库地址/项目/ref，无法启动 agentic",
+            project=str(repo_key or ""),
+            ref=str(ref or ""),
+        )
     cache_root = os.getenv("REPO_CACHE_DIR", "data/repo_cache")
     try:
         reviewer = AgenticReviewer(
@@ -82,9 +86,14 @@ def _review_with_strategy(changes: list, commits_text: str, webhook_data: dict, 
             cache_root=cache_root,
         )
         return reviewer.review(diffs_text=str(changes), commits_text=commits_text)
+    except AgenticReviewError:
+        raise
     except Exception as e:
-        logger.error("agentic reviewer raised unexpectedly, falling back: %s", e)
-        return CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        _fail_agentic(
+            f"agentic 未预期异常: {e}",
+            project=str(repo_key or ""),
+            ref=str(ref or ""),
+        )
 
 
 def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gitlab_url_slug: str):
@@ -134,6 +143,8 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
             deletions=deletions,
         ))
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
@@ -232,6 +243,8 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             )
         )
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'AI Code Review 服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
@@ -284,6 +297,8 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
             deletions=deletions,
         ))
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
@@ -371,6 +386,8 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 last_commit_id=github_last_commit_id,
             ))
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
@@ -425,6 +442,8 @@ def handle_gitea_push_event(webhook_data: dict, gitea_token: str, gitea_url: str
             deletions=deletions,
         ))
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
@@ -504,6 +523,8 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
                 last_commit_id=last_commit_id,
             ))
 
+    except AgenticReviewError as e:
+        logger.error('agentic review failed (already notified): %s', e)
     except Exception as e:
         error_message = f'AI Code Review 服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
