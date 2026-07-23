@@ -320,9 +320,10 @@ def resolve_and_extract_prd(
     """Resolve PRD text: GitHub Contents API / HTTP download / repo PRD fallback.
 
     Order:
-      1. github blob/raw URL → Contents API (works when github.com HTTPS hangs)
+      1. Prefer Contents API for blob/raw URLs, and for user-attachments when
+         repo_key/ref are known (avoids hanging github.com on domestic ECS)
       2. Direct HTTP download of the attachment URL
-      3. On failure: search the PR head tree for a PRD pdf/docx and fetch via API
+      3. On failure (non-API-first path): search repo tree for a PRD pdf/docx
     """
     from biz.prd.github_prd_source import (
         parse_github_repo_file_url,
@@ -332,8 +333,18 @@ def resolve_and_extract_prd(
     if not url:
         return ExtractResult(ok=False, reason="附件 URL 为空")
 
-    # Fast path: repo blob/raw → API (skip hanging github.com / raw.githubusercontent.com)
-    if token and parse_github_repo_file_url(url):
+    prefer_api_first = bool(
+        token
+        and (
+            parse_github_repo_file_url(url)
+            or (
+                repo_key
+                and ref
+                and "user-attachments/" in url.lower()
+            )
+        )
+    )
+    if prefer_api_first:
         data, source = resolve_prd_bytes_via_github_api(
             url=url, token=token, repo_key=repo_key, ref=ref
         )
@@ -341,14 +352,14 @@ def resolve_and_extract_prd(
             result = extract_bytes(data, url=url)
             if result.ok:
                 logger.info("PRD resolved via %s", source)
+                return result
             return result
 
     http_result = download_and_extract(url, token, timeout=timeout)
     if http_result.ok:
         return http_result
 
-    # Domestic ECS: user-attachments often ReadTimeout; fall back to repo PRD.
-    if token and repo_key and ref:
+    if token and repo_key and ref and not prefer_api_first:
         data, source = resolve_prd_bytes_via_github_api(
             url=url, token=token, repo_key=repo_key, ref=ref
         )
@@ -365,6 +376,13 @@ def resolve_and_extract_prd(
         return ExtractResult(
             ok=False,
             reason=f"{http_result.reason}；{source}",
+            source_url=url,
+        )
+
+    if prefer_api_first:
+        return ExtractResult(
+            ok=False,
+            reason=f"Contents API 与直连下载均失败: {http_result.reason}",
             source_url=url,
         )
 
