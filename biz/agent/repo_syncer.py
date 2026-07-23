@@ -96,21 +96,25 @@ def _is_github_https(url: str) -> bool:
 
 
 def _transport_url(url: str) -> str:
-    """Auth-inject then optionally wrap with ``GIT_CLONE_MIRROR_PREFIX``.
+    """Build the URL actually used for git clone/fetch.
 
-    Domestic ECS often cannot reach ``github.com`` git over HTTPS; the deploy
-    scripts already use ``https://ghproxy.net/`` as a fallback. When
-    ``GIT_CLONE_MIRROR_PREFIX`` is set, agentic clone/fetch uses the same
-    pattern for github.com hosts only.
+    Domestic ECS often cannot reach ``github.com`` git over HTTPS; set
+    ``GIT_CLONE_MIRROR_PREFIX`` (e.g. ``https://ghproxy.net/``) to route
+    github.com traffic through a mirror — same pattern as
+    ``scripts/deploy/remote-update.sh``.
+
+    Important: common mirrors return HTTP 403 when the nested URL embeds
+    ``oauth2:<token>@``. For mirrored github.com clones we therefore use a
+    *bare* HTTPS URL (works for public repos). Direct (non-mirror) clones
+    still get host-based credential injection for private repos.
     """
     canonical = _strip_userinfo(_peel_mirror(url))
-    authed = _auth_url(canonical)
     prefix = _mirror_prefix()
-    if not prefix or not _is_github_https(authed):
-        return authed
-    if authed.startswith(prefix):
-        return authed
-    return f"{prefix}{authed}"
+    if prefix and _is_github_https(canonical):
+        if canonical.startswith(prefix):
+            return canonical
+        return f"{prefix}{canonical}"
+    return _auth_url(canonical)
 
 
 class LocalRepoSyncer:

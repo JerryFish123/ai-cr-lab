@@ -13,11 +13,12 @@ class TestTransportUrl:
         assert _transport_url("https://github.com/o/r.git") == \
             "https://oauth2:tok@github.com/o/r.git"
 
-    def test_wraps_github_with_mirror_prefix(self, monkeypatch):
+    def test_wraps_github_with_mirror_prefix_without_embedded_creds(self, monkeypatch):
+        # ghproxy returns 403 if oauth2:token@ is nested in the mirrored URL.
         monkeypatch.setenv("GIT_CLONE_MIRROR_PREFIX", "https://ghproxy.net")
         monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "tok")
         assert _transport_url("https://github.com/o/r.git") == \
-            "https://ghproxy.net/https://oauth2:tok@github.com/o/r.git"
+            "https://ghproxy.net/https://github.com/o/r.git"
 
     def test_mirror_skips_non_github(self, monkeypatch):
         monkeypatch.setenv("GIT_CLONE_MIRROR_PREFIX", "https://ghproxy.net/")
