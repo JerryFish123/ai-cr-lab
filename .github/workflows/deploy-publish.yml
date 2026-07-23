@@ -2,6 +2,7 @@
 # GitHub Secrets（Repository secrets）:
 #   ECS_HOST / ECS_USER / ECS_SSH_KEY  — 部署通道
 #   APP_ENV_FILE                       — 完整 conf/.env 文件内容（多行）
+#                                        须含 GIT_CLONE_MIRROR_PREFIX 等关键键，否则部署失败
 name: Deploy publish → ECS
 
 on:
@@ -44,4 +45,24 @@ jobs:
             umask 077
             printf '%s\n' "$APP_ENV_FILE" > conf/.env
             chmod 600 conf/.env
+
+            # Fail-fast: 关键配置缺失时不要带着坏 .env 继续构建
+            missing=0
+            for key in \
+              LLM_PROVIDER \
+              GITHUB_ACCESS_TOKEN \
+              REVIEW_STRATEGY \
+              GIT_CLONE_MIRROR_PREFIX
+            do
+              if ! grep -qE "^${key}=.+" conf/.env; then
+                echo "ERROR: conf/.env 缺少或为空: ${key}"
+                echo "请更新 GitHub Secret APP_ENV_FILE 后重试"
+                missing=1
+              fi
+            done
+            if [ "$missing" -ne 0 ]; then
+              exit 1
+            fi
+            echo "[deploy] conf/.env critical keys OK"
+
             bash scripts/deploy/remote-update.sh
