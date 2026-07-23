@@ -16,15 +16,17 @@ if [ ! -f conf/.env ]; then
   exit 1
 fi
 
-# 国内 ECS 直连 GitHub 偶发 Empty reply：带重试；失败则尝试 ghproxy 镜像拉取
+# 国内 ECS 直连 GitHub 常会“挂起不失败”：每轮加 timeout，失败后改走 ghproxy
+FETCH_TIMEOUT="${GIT_FETCH_TIMEOUT_SECONDS:-45}"
 fetch_ok=0
-for attempt in 1 2 3; do
-  if git fetch --prune "$REMOTE" "$BRANCH"; then
+for attempt in 1 2; do
+  echo "[deploy] git fetch attempt=$attempt (timeout=${FETCH_TIMEOUT}s)"
+  if timeout "$FETCH_TIMEOUT" git fetch --prune "$REMOTE" "$BRANCH"; then
     fetch_ok=1
     break
   fi
-  echo "[deploy] git fetch 失败 (attempt=$attempt)，3s 后重试…"
-  sleep 3
+  echo "[deploy] git fetch 失败/超时 (attempt=$attempt)，2s 后重试…"
+  sleep 2
 done
 
 if [ "$fetch_ok" -ne 1 ]; then
@@ -33,7 +35,7 @@ if [ "$fetch_ok" -ne 1 ]; then
     https://github.com/*)
       MIRROR_URL="https://ghproxy.net/${ORIGIN_URL}"
       echo "[deploy] 改用镜像拉取: $MIRROR_URL"
-      git fetch --prune "$MIRROR_URL" "+refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}"
+      timeout 120 git fetch --prune "$MIRROR_URL" "+refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}"
       ;;
     *)
       echo "[deploy] ERROR: git fetch 失败且无法推断镜像 URL: $ORIGIN_URL"
