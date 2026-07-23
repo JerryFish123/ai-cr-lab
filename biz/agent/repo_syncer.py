@@ -59,6 +59,60 @@ def _auth_url(url: str) -> str:
     return urlunparse(parsed._replace(netloc=f"{userinfo}@{parsed.netloc}"))
 
 
+def _mirror_prefix() -> str:
+    """Normalized ``GIT_CLONE_MIRROR_PREFIX`` (trailing slash), or empty."""
+    raw = (os.getenv("GIT_CLONE_MIRROR_PREFIX") or "").strip()
+    if not raw:
+        return ""
+    return raw if raw.endswith("/") else f"{raw}/"
+
+
+def _peel_mirror(url: str) -> str:
+    """Strip configured mirror prefix so auth/host logic sees the real URL."""
+    prefix = _mirror_prefix()
+    if prefix and url.startswith(prefix):
+        return url[len(prefix) :]
+    return url
+
+
+def _strip_userinfo(url: str) -> str:
+    """Remove embedded credentials from an HTTPS URL (for token refresh)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return url
+    netloc = parsed.netloc or ""
+    if "@" not in netloc:
+        return url
+    hostport = netloc.rsplit("@", 1)[-1]
+    return urlunparse(parsed._replace(netloc=hostport))
+
+
+def _is_github_https(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    return host == "github.com" or host.endswith(".github.com")
+
+
+def _transport_url(url: str) -> str:
+    """Auth-inject then optionally wrap with ``GIT_CLONE_MIRROR_PREFIX``.
+
+    Domestic ECS often cannot reach ``github.com`` git over HTTPS; the deploy
+    scripts already use ``https://ghproxy.net/`` as a fallback. When
+    ``GIT_CLONE_MIRROR_PREFIX`` is set, agentic clone/fetch uses the same
+    pattern for github.com hosts only.
+    """
+    canonical = _strip_userinfo(_peel_mirror(url))
+    authed = _auth_url(canonical)
+    prefix = _mirror_prefix()
+    if not prefix or not _is_github_https(authed):
+        return authed
+    if authed.startswith(prefix):
+        return authed
+    return f"{prefix}{authed}"
+
+
 class LocalRepoSyncer:
     """Lazily clone (first sync) or fetch+checkout (subsequent) a remote repo.
 
@@ -91,18 +145,19 @@ class LocalRepoSyncer:
 
         with self._lock(lock_path):
             if not (target / ".git").exists():
-                self._clone(_auth_url(url), target)
-            self._ensure_authenticated_remote(target)
+                self._clone(_transport_url(url), target)
+            self._ensure_authenticated_remote(target, preferred_url=url)
             self._fetch_and_checkout(target, ref)
         return target
 
-    def _ensure_authenticated_remote(self, target: Path) -> None:
-        """Rewrite ``origin`` URL on a cached repo to include credentials.
+    def _ensure_authenticated_remote(self, target: Path, preferred_url: str | None = None) -> None:
+        """Rewrite ``origin`` to an auth + mirror transport URL.
 
-        Handles two cases:
-          1. Repo was cloned before this fix landed (no creds in URL).
-          2. The operator updates the token env var and the cache should
-             pick up the new value on the next sync.
+        Handles:
+          1. Repo cloned before auth/mirror support (bare github URL).
+          2. Token env var rotated — re-inject credentials.
+          3. ``GIT_CLONE_MIRROR_PREFIX`` enabled — rewrite origin so fetch
+             also goes through the mirror (direct github.com often hangs).
 
         Silently no-ops if ``origin`` doesn't exist. Raises on set-url
         failure; the caller's soft-degrade will then kick in.
@@ -122,9 +177,11 @@ class LocalRepoSyncer:
             # git binary missing; let the subsequent fetch raise.
             return
         existing = r.stdout.strip()
-        new_url = _auth_url(existing)
+        base = preferred_url or existing
+        new_url = _transport_url(base)
         if new_url == existing:
             return
+        logger.info("updating origin transport URL for %s (mirror/auth)", target.name)
         try:
             subprocess.run(
                 ["git", "remote", "set-url", "origin", new_url],
@@ -165,7 +222,9 @@ class LocalRepoSyncer:
             f.close()
 
     def _clone(self, url: str, target: Path) -> None:
-        logger.debug("cloning %s -> %s", url, target)
+        # Redact oauth2 tokens whether in netloc or inside a mirror path.
+        redacted = re.sub(r"oauth2:[^/@\s]+@", "oauth2:***@", url)
+        logger.info("cloning %s -> %s", redacted, target)
         try:
             subprocess.run(
                 ["git", "clone", url, str(target)],
@@ -175,8 +234,13 @@ class LocalRepoSyncer:
                 timeout=self.clone_timeout,
             )
         except subprocess.TimeoutExpired as e:
+            # Partial clone dirs block the next attempt.
+            if target.exists():
+                subprocess.run(["rm", "-rf", str(target)], check=False)
             raise RuntimeError(f"git clone timed out after {self.clone_timeout}s") from e
         except subprocess.CalledProcessError as e:
+            if target.exists():
+                subprocess.run(["rm", "-rf", str(target)], check=False)
             raise RuntimeError(f"git clone failed: {e.stderr.strip()}") from e
 
     def _fetch_and_checkout(self, target: Path, ref: str) -> None:

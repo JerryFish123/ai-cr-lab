@@ -3,7 +3,27 @@ from pathlib import Path
 
 import pytest
 
-from biz.agent.repo_syncer import LocalRepoSyncer
+from biz.agent.repo_syncer import LocalRepoSyncer, _transport_url
+
+
+class TestTransportUrl:
+    def test_no_mirror_when_unset(self, monkeypatch):
+        monkeypatch.delenv("GIT_CLONE_MIRROR_PREFIX", raising=False)
+        monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "tok")
+        assert _transport_url("https://github.com/o/r.git") == \
+            "https://oauth2:tok@github.com/o/r.git"
+
+    def test_wraps_github_with_mirror_prefix(self, monkeypatch):
+        monkeypatch.setenv("GIT_CLONE_MIRROR_PREFIX", "https://ghproxy.net")
+        monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "tok")
+        assert _transport_url("https://github.com/o/r.git") == \
+            "https://ghproxy.net/https://oauth2:tok@github.com/o/r.git"
+
+    def test_mirror_skips_non_github(self, monkeypatch):
+        monkeypatch.setenv("GIT_CLONE_MIRROR_PREFIX", "https://ghproxy.net/")
+        monkeypatch.setenv("GITLAB_ACCESS_TOKEN", "gl")
+        assert _transport_url("https://gitlab.example.com/o/r.git") == \
+            "https://oauth2:gl@gitlab.example.com/o/r.git"
 
 
 @pytest.fixture

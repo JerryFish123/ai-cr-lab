@@ -17,6 +17,7 @@ from biz.agent.repo_syncer import (
     LocalRepoSyncer,
     _auth_url,
     _pick_token_for_host,
+    _transport_url,
 )
 
 
@@ -217,10 +218,11 @@ class TestEnsureAuthenticatedRemote:
         ).stdout.strip()
         assert after == original_url
 
-    def test_noop_when_origin_already_credentialed(
+    def test_refreshes_credentials_when_origin_already_credentialed(
         self, tmp_path, cached_repo_with_bare_origin: Path
     ):
-        # Pre-set the origin to an already-credentialed URL.
+        # Pre-set the origin to an already-credentialed URL; transport layer
+        # strips userinfo and re-injects the current token.
         cred_url = "https://user:preexisting@somewhere.example/proj.git"
         subprocess.run(
             ["git", "remote", "set-url", "origin", cred_url],
@@ -238,7 +240,7 @@ class TestEnsureAuthenticatedRemote:
             ["git", "remote", "get-url", "origin"],
             cwd=cached_repo_with_bare_origin, check=True, capture_output=True, text=True,
         ).stdout.strip()
-        assert after == cred_url
+        assert after == "https://oauth2:some_token@somewhere.example/proj.git"
 
     def test_noop_when_no_origin(self, tmp_path):
         # A dir with .git but no remote.
