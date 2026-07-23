@@ -10,9 +10,33 @@ from biz.platforms.gitea.webhook_handler import filter_changes as filter_gitea_c
     PushHandler as GiteaPushHandler
 from biz.service.review_service import ReviewService
 from biz.agent.agentic_reviewer import AgenticReviewError
+from biz.prd.pipeline import maybe_post_requirement_review
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.log import logger
+
+
+def _post_prd_requirement_if_needed(
+    *,
+    webhook_data: dict,
+    access_token: str,
+    platform_url: str,
+    changes: list,
+    commits_text: str,
+    add_notes,
+) -> None:
+    """Second comment: 需求完成情况 (only when PRD attachment present)."""
+    repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, platform_url)
+    maybe_post_requirement_review(
+        webhook_data=webhook_data,
+        access_token=access_token,
+        changes=changes,
+        commits_text=commits_text,
+        add_notes=add_notes,
+        repo_url=repo_url,
+        repo_key=repo_key,
+        ref=ref,
+    )
 
 
 def _resolve_repo_for_event(webhook_data: dict, gitlab_url: str = "") -> tuple[str | None, str | None, str | None]:
@@ -220,8 +244,18 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
         review_result = _review_with_strategy(changes, commits_text, webhook_data, gitlab_url)
 
-        # 将review结果提交到Gitlab的 notes
+        # 将review结果提交到Gitlab的 notes（代码质量）
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
+
+        # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
+        _post_prd_requirement_if_needed(
+            webhook_data=webhook_data,
+            access_token=gitlab_token,
+            platform_url=gitlab_url,
+            changes=changes,
+            commits_text=commits_text,
+            add_notes=handler.add_merge_request_notes,
+        )
 
         # dispatch merge_request_reviewed event
         event_manager['merge_request_reviewed'].send(
@@ -364,8 +398,18 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
         review_result = _review_with_strategy(changes, commits_text, webhook_data, github_url)
 
-        # 将review结果提交到GitHub的 notes
+        # 将review结果提交到GitHub的 notes（代码质量）
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
+
+        # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
+        _post_prd_requirement_if_needed(
+            webhook_data=webhook_data,
+            access_token=github_token,
+            platform_url=github_url,
+            changes=changes,
+            commits_text=commits_text,
+            add_notes=handler.add_pull_request_notes,
+        )
 
         # dispatch pull_request_reviewed event
         event_manager['merge_request_reviewed'].send(
@@ -501,6 +545,15 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
         review_result = _review_with_strategy(changes, commits_text, webhook_data, gitea_url)
 
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
+
+        _post_prd_requirement_if_needed(
+            webhook_data=webhook_data,
+            access_token=gitea_token,
+            platform_url=gitea_url,
+            changes=changes,
+            commits_text=commits_text,
+            add_notes=handler.add_pull_request_notes,
+        )
 
         repository = webhook_data.get('repository', {})
         author_info = pull_request.get('user', {}) or webhook_data.get('sender', {}) or {}

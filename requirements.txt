@@ -21,3 +21,6 @@ zhipuai==2.1.5.20230904
 pytest==8.3.3
 pytest-mock==3.14.0
 pytest-cov==7.1.0
+pypdf==5.4.0
+python-docx==1.1.2
+PyYAML==6.0.2

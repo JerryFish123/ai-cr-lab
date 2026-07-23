@@ -30,7 +30,16 @@ log/*
 data/*
 !data/.gitkeep
 data/repo_cache/
+data/prd_tmp/
+
+# Accidental local PRD / office docs at repo root (never commit)
+/*.pdf
+/*.docx
+/*.doc
 
 # Test / coverage
 .coverage
 .pytest_cache/
+*.egg-info/
+dist/
+build/
