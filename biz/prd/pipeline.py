@@ -32,28 +32,32 @@ def maybe_post_requirement_review(
     repo_key: str | None,
     ref: str | None,
     description_body: str | None = None,
-) -> None:
+) -> str | None:
     """If PR description has a PRD attachment, post coverage analysis or parse failure.
 
+    Returns the posted body (including header / failure text) for DingTalk digest,
+    or None when requirement review is skipped.
     Soft failures become a PR comment; do not raise to the caller.
     """
     body = description_body if description_body is not None else extract_description_body(webhook_data)
     intent = parse_prd_intent(body)
     if not intent.should_run_requirement_review:
         logger.info("PRD requirement review skipped: no PRD attachment in description")
-        return
+        return None
 
     url = intent.primary_url
     logger.info("PRD requirement review starting: url=%s chapters=%s", url, intent.chapter_hints)
     # download_and_extract writes a short-lived temp file and deletes it in finally.
     extracted = download_and_extract(url or "", access_token)
     if not extracted.ok:
-        add_notes(format_prd_parse_failure(extracted.reason or "未知原因"))
-        return
+        note = format_prd_parse_failure(extracted.reason or "未知原因")
+        add_notes(note)
+        return note
 
     if not (repo_url and repo_key and ref):
-        add_notes(format_prd_parse_failure("无法从 webhook 解析仓库地址/ref，无法进行需求覆盖探查"))
-        return
+        note = format_prd_parse_failure("无法从 webhook 解析仓库地址/ref，无法进行需求覆盖探查")
+        add_notes(note)
+        return note
 
     cache_root = os.getenv("REPO_CACHE_DIR", "data/repo_cache")
     # Keep PRD text only for this review call; do not persist to disk.
@@ -72,13 +76,19 @@ def maybe_post_requirement_review(
             description=intent.raw_body,
             chapter_hints=intent.chapter_hints,
         )
-        add_notes(format_requirement_header(report))
+        note = format_requirement_header(report)
+        add_notes(note)
+        return note
     except AgenticReviewError as e:
         logger.error("prd requirement review agentic failed: %s", e)
-        add_notes(format_prd_parse_failure(f"需求覆盖分析失败（agentic）: {e}"))
+        note = format_prd_parse_failure(f"需求覆盖分析失败（agentic）: {e}")
+        add_notes(note)
+        return note
     except Exception as e:  # noqa: BLE001
         logger.error("prd requirement review unexpected error: %s", e)
-        add_notes(format_prd_parse_failure(f"需求覆盖分析未预期异常: {type(e).__name__}: {e}"))
+        note = format_prd_parse_failure(f"需求覆盖分析未预期异常: {type(e).__name__}: {e}")
+        add_notes(note)
+        return note
     finally:
         # Drop large string reference ASAP after review finishes.
         prd_text = ""

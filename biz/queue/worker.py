@@ -10,9 +10,15 @@ from biz.platforms.gitea.webhook_handler import filter_changes as filter_gitea_c
     PushHandler as GiteaPushHandler
 from biz.service.review_service import ReviewService
 from biz.agent.agentic_reviewer import AgenticReviewError
+from biz.prd.description import extract_description_body, parse_prd_intent
 from biz.prd.pipeline import maybe_post_requirement_review
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
+from biz.utils.im.review_notify import (
+    notify_review_finished,
+    notify_review_started,
+    pr_meta_from_webhook,
+)
 from biz.utils.log import logger
 
 
@@ -24,10 +30,13 @@ def _post_prd_requirement_if_needed(
     changes: list,
     commits_text: str,
     add_notes,
-) -> None:
-    """Second comment: 需求完成情况 (only when PRD attachment present)."""
+) -> str | None:
+    """Second comment: 需求完成情况 (only when PRD attachment present).
+
+    Returns posted note body for DingTalk digest, or None if skipped.
+    """
     repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, platform_url)
-    maybe_post_requirement_review(
+    return maybe_post_requirement_review(
         webhook_data=webhook_data,
         access_token=access_token,
         changes=changes,
@@ -36,6 +45,55 @@ def _post_prd_requirement_if_needed(
         repo_url=repo_url,
         repo_key=repo_key,
         ref=ref,
+    )
+
+
+def _prd_intent_for_webhook(webhook_data: dict):
+    return parse_prd_intent(extract_description_body(webhook_data))
+
+
+def _notify_review_started_for_pr(
+    *,
+    webhook_data: dict,
+    url_slug: str,
+    file_count: int,
+) -> bool:
+    """Send DingTalk start notice. Returns whether PRD analysis will run."""
+    intent = _prd_intent_for_webhook(webhook_data)
+    has_prd = intent.should_run_requirement_review
+    meta = pr_meta_from_webhook(webhook_data)
+    notify_review_started(
+        project_name=meta["project_name"],
+        author=meta["author"],
+        source_branch=meta["source_branch"],
+        target_branch=meta["target_branch"],
+        url=meta["url"],
+        has_prd=has_prd,
+        file_count=file_count,
+        url_slug=url_slug,
+        webhook_data=webhook_data,
+    )
+    return has_prd
+
+
+def _notify_review_finished_for_pr(
+    *,
+    webhook_data: dict,
+    url_slug: str,
+    quality_report: str,
+    requirement_report: str | None,
+    has_prd: bool,
+) -> None:
+    meta = pr_meta_from_webhook(webhook_data)
+    notify_review_finished(
+        project_name=meta["project_name"],
+        author=meta["author"],
+        url=meta["url"],
+        quality_report=quality_report,
+        requirement_report=requirement_report,
+        has_prd=has_prd,
+        url_slug=url_slug,
+        webhook_data=webhook_data,
     )
 
 
@@ -240,6 +298,12 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             logger.error('Failed to get commits')
             return
 
+        has_prd = _notify_review_started_for_pr(
+            webhook_data=webhook_data,
+            url_slug=gitlab_url_slug,
+            file_count=len(changes),
+        )
+
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
         review_result = _review_with_strategy(changes, commits_text, webhook_data, gitlab_url)
@@ -248,13 +312,21 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
 
         # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
-        _post_prd_requirement_if_needed(
+        requirement_report = _post_prd_requirement_if_needed(
             webhook_data=webhook_data,
             access_token=gitlab_token,
             platform_url=gitlab_url,
             changes=changes,
             commits_text=commits_text,
             add_notes=handler.add_merge_request_notes,
+        )
+
+        _notify_review_finished_for_pr(
+            webhook_data=webhook_data,
+            url_slug=gitlab_url_slug,
+            quality_report=review_result,
+            requirement_report=requirement_report,
+            has_prd=has_prd,
         )
 
         # dispatch merge_request_reviewed event
@@ -394,6 +466,12 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
             logger.error('Failed to get commits')
             return
 
+        has_prd = _notify_review_started_for_pr(
+            webhook_data=webhook_data,
+            url_slug=github_url_slug,
+            file_count=len(changes),
+        )
+
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
         review_result = _review_with_strategy(changes, commits_text, webhook_data, github_url)
@@ -402,13 +480,21 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
         # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
-        _post_prd_requirement_if_needed(
+        requirement_report = _post_prd_requirement_if_needed(
             webhook_data=webhook_data,
             access_token=github_token,
             platform_url=github_url,
             changes=changes,
             commits_text=commits_text,
             add_notes=handler.add_pull_request_notes,
+        )
+
+        _notify_review_finished_for_pr(
+            webhook_data=webhook_data,
+            url_slug=github_url_slug,
+            quality_report=review_result,
+            requirement_report=requirement_report,
+            has_prd=has_prd,
         )
 
         # dispatch pull_request_reviewed event
@@ -542,17 +628,32 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
             return
 
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
+
+        has_prd = _notify_review_started_for_pr(
+            webhook_data=webhook_data,
+            url_slug=gitea_url_slug,
+            file_count=len(changes),
+        )
+
         review_result = _review_with_strategy(changes, commits_text, webhook_data, gitea_url)
 
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
-        _post_prd_requirement_if_needed(
+        requirement_report = _post_prd_requirement_if_needed(
             webhook_data=webhook_data,
             access_token=gitea_token,
             platform_url=gitea_url,
             changes=changes,
             commits_text=commits_text,
             add_notes=handler.add_pull_request_notes,
+        )
+
+        _notify_review_finished_for_pr(
+            webhook_data=webhook_data,
+            url_slug=gitea_url_slug,
+            quality_report=review_result,
+            requirement_report=requirement_report,
+            has_prd=has_prd,
         )
 
         repository = webhook_data.get('repository', {})

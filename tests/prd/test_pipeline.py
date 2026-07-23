@@ -23,7 +23,7 @@ GH_PAYLOAD = {
 class TestMaybePostRequirementReview:
     def test_skip_without_attachment(self):
         notes = MagicMock()
-        maybe_post_requirement_review(
+        result = maybe_post_requirement_review(
             webhook_data={"pull_request": {"body": "refactor only"}},
             access_token="t",
             changes=[],
@@ -34,6 +34,7 @@ class TestMaybePostRequirementReview:
             ref="sha",
         )
         notes.assert_not_called()
+        assert result is None
 
     def test_parse_failure_comment(self):
         notes = MagicMock()
@@ -41,7 +42,7 @@ class TestMaybePostRequirementReview:
             "biz.prd.pipeline.download_and_extract",
             return_value=MagicMock(ok=False, reason="HTTP 403", text=""),
         ):
-            maybe_post_requirement_review(
+            result = maybe_post_requirement_review(
                 webhook_data=GH_PAYLOAD,
                 access_token="t",
                 changes=["+x"],
@@ -55,6 +56,7 @@ class TestMaybePostRequirementReview:
         body = notes.call_args[0][0]
         assert "PRD解析失败" in body
         assert "HTTP 403" in body
+        assert result == body
 
     def test_success_posts_requirement_header(self):
         notes = MagicMock()
@@ -66,7 +68,7 @@ class TestMaybePostRequirementReview:
                 MockRR.return_value.review_requirements.return_value = (
                     "章节 3.2 已覆盖\n完成度:约80%\n建议：无"
                 )
-                maybe_post_requirement_review(
+                result = maybe_post_requirement_review(
                     webhook_data=GH_PAYLOAD,
                     access_token="t",
                     changes=["+x"],
@@ -80,6 +82,7 @@ class TestMaybePostRequirementReview:
         body = notes.call_args[0][0]
         assert body.startswith("## 需求完成情况")
         assert "完成度:约80%" in body
+        assert result == body
 
 
 def test_format_failure():
