@@ -68,7 +68,7 @@ def format_review_finished_markdown(
     url: str,
     digest_body: str,
 ) -> str:
-    body = (digest_body or "").strip() or "未发现高风险问题"
+    body = (digest_body or "").strip() or "未发现严重问题"
     return (
         f"### 审查完成：{project_name}\n\n"
         f"- **提交者**: {author}\n"
@@ -96,14 +96,9 @@ def fallback_digest(quality_report: str, requirement_report: str | None) -> str:
             if len(risks) >= 8:
                 break
 
-    parts = ["#### 潜在风险问题"]
-    if risks:
-        parts.extend(risks[:8])
-    else:
-        parts.append("- 未发现高风险问题")
+    parts: list[str] = []
 
     if requirement_report is not None:
-        parts.append("")
         parts.append("#### 需求完成情况")
         if "PRD解析失败" in requirement_report:
             # Keep failure short.
@@ -115,10 +110,17 @@ def fallback_digest(quality_report: str, requirement_report: str | None) -> str:
             parts.append(f"- PRD 解析失败：{reason[:200]}")
         else:
             done, todo = _split_requirement_lines(requirement_report)
-            parts.append("**已完成**")
-            parts.extend(done or ["- （未能从报告中识别已完成项）"])
-            parts.append("**未完成**")
-            parts.extend(todo or ["- （未能从报告中识别未完成项）"])
+            parts.append("**未覆盖（重点）**")
+            parts.extend(todo or ["- 无未覆盖项"])
+            parts.append("**已覆盖**")
+            parts.extend((done or ["- （未能从报告中识别已覆盖项）"])[:3])
+        parts.append("")
+
+    parts.append("#### 潜在风险问题")
+    if risks:
+        parts.extend(risks[:8])
+    else:
+        parts.append("- 未发现严重问题")
 
     return "\n".join(parts)
 
@@ -191,7 +193,10 @@ def _llm_digest(
     if not text or "总分" in text[:80]:
         # Guard against model ignoring instructions.
         return fallback_digest(quality_report, requirement_report if has_prd else None)
-    return text
+    # Drop medium/minor leftovers if the model ignored severity rules.
+    from biz.utils.review_report_format import trim_quality_report_for_publish
+
+    return trim_quality_report_for_publish(text)
 
 
 def notify_review_started(

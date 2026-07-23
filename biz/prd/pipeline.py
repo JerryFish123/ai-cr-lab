@@ -9,6 +9,7 @@ from biz.prd.description import extract_description_body, parse_prd_intent
 from biz.prd.extract import resolve_and_extract_prd
 from biz.prd.requirement_reviewer import RequirementReviewer
 from biz.utils.log import logger
+from biz.utils.review_report_format import prioritize_uncovered_requirements
 
 AddNotesFn = Callable[[str], None]
 
@@ -81,7 +82,7 @@ def maybe_post_requirement_review(
             description=intent.raw_body,
             chapter_hints=intent.chapter_hints,
         )
-        note = format_requirement_header(report)
+        note = format_requirement_header(prioritize_uncovered_requirements(report))
         add_notes(note)
         return note
     except AgenticReviewError as e:

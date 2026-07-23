@@ -81,6 +81,7 @@ class TestMaybePostRequirementReview:
         notes.assert_called_once()
         body = notes.call_args[0][0]
         assert body.startswith("## 需求完成情况")
+        assert "未覆盖（重点）" in body
         assert "完成度:约80%" in body
         assert result == body
 

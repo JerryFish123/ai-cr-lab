@@ -88,7 +88,7 @@ class TestFallbackDigest:
 
     def test_no_risk_message(self):
         out = fallback_digest("- 命名可以更好\n总分:90分", None)
-        assert "未发现高风险问题" in out
+        assert "未发现严重问题" in out
 
     def test_with_prd_sections(self):
         req = """
@@ -99,10 +99,13 @@ class TestFallbackDigest:
 """
         out = fallback_digest("- 硬编码密钥有泄露风险", req)
         assert "需求完成情况" in out
-        assert "已完成" in out
-        assert "未完成" in out
+        assert "未覆盖（重点）" in out
+        assert "已覆盖" in out
         assert "Banner" in out
         assert "Profile" in out
+        # Uncovered section should appear before covered / risks.
+        assert out.index("未覆盖（重点）") < out.index("已覆盖")
+        assert out.index("需求完成情况") < out.index("潜在风险问题")
 
     def test_prd_parse_failure_short(self):
         req = "## 需求完成情况\n\n**PRD解析失败**\n\n原因：HTTP 403"

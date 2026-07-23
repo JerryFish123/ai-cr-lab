@@ -20,6 +20,7 @@ from biz.utils.im.review_notify import (
     pr_meta_from_webhook,
 )
 from biz.utils.log import logger
+from biz.utils.review_report_format import trim_quality_report_for_publish
 
 
 def _post_prd_requirement_if_needed(
@@ -148,7 +149,8 @@ def _review_with_strategy(changes: list, commits_text: str, webhook_data: dict, 
     """Pick review strategy based on REVIEW_STRATEGY env var."""
     strategy = os.getenv("REVIEW_STRATEGY", "diff_only")
     if strategy != "agentic":
-        return CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        report = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        return trim_quality_report_for_publish(report)
 
     # Agentic mode — failures notify DingTalk and raise (no diff_only fallback).
     from biz.agent.agentic_reviewer import AgenticReviewer, _fail_agentic
@@ -167,7 +169,8 @@ def _review_with_strategy(changes: list, commits_text: str, webhook_data: dict, 
             ref=ref,
             cache_root=cache_root,
         )
-        return reviewer.review(diffs_text=str(changes), commits_text=commits_text)
+        report = reviewer.review(diffs_text=str(changes), commits_text=commits_text)
+        return trim_quality_report_for_publish(report)
     except AgenticReviewError:
         raise
     except Exception as e:
