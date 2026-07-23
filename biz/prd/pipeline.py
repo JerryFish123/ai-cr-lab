@@ -6,7 +6,7 @@ from typing import Callable
 
 from biz.agent.agentic_reviewer import AgenticReviewError
 from biz.prd.description import extract_description_body, parse_prd_intent
-from biz.prd.extract import download_and_extract
+from biz.prd.extract import resolve_and_extract_prd
 from biz.prd.requirement_reviewer import RequirementReviewer
 from biz.utils.log import logger
 
@@ -47,8 +47,13 @@ def maybe_post_requirement_review(
 
     url = intent.primary_url
     logger.info("PRD requirement review starting: url=%s chapters=%s", url, intent.chapter_hints)
-    # download_and_extract writes a short-lived temp file and deletes it in finally.
-    extracted = download_and_extract(url or "", access_token)
+    # Prefer Contents API / repo PRD fallback when github.com attachments time out.
+    extracted = resolve_and_extract_prd(
+        url or "",
+        access_token,
+        repo_key=repo_key,
+        ref=ref,
+    )
     if not extracted.ok:
         note = format_prd_parse_failure(extracted.reason or "未知原因")
         add_notes(note)

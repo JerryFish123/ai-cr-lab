@@ -11,6 +11,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -219,11 +220,29 @@ def _stream_download_to_temp(
         return tmp_path, resp.status_code, ctype, None
 
 
+def _is_github_host_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host == "github.com" or host.endswith(".github.com") or host.endswith(
+        "githubusercontent.com"
+    )
+
+
+def _download_timeout(url: str, timeout: int | tuple[int, int]) -> int | tuple[int, int]:
+    """Use a shorter read timeout for github.com hosts (often unreachable in CN)."""
+    if isinstance(timeout, tuple):
+        return timeout
+    if _is_github_host_url(url):
+        connect = int(os.getenv("PRD_GITHUB_CONNECT_TIMEOUT", "10"))
+        read = int(os.getenv("PRD_GITHUB_READ_TIMEOUT", "20"))
+        return (connect, read)
+    return timeout
+
+
 def download_and_extract(
     url: str,
     token: str | None = None,
     *,
-    timeout: int = 60,
+    timeout: int | tuple[int, int] = 60,
 ) -> ExtractResult:
     """Download attachment to a temp file, extract text, then delete the file.
 
@@ -245,18 +264,25 @@ def download_and_extract(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
+    effective_timeout = _download_timeout(url, timeout)
     tmp_path: Path | None = None
     try:
         try:
             tmp_path, status, ctype, err = _stream_download_to_temp(
-                url, headers, timeout=timeout, max_bytes=DEFAULT_MAX_DOWNLOAD_BYTES
+                url,
+                headers,
+                timeout=effective_timeout,
+                max_bytes=DEFAULT_MAX_DOWNLOAD_BYTES,
             )
             if status in (401, 403) and token:
                 safe_unlink(tmp_path)
                 tmp_path = None
                 headers["Authorization"] = f"token {token}"
                 tmp_path, status, ctype, err = _stream_download_to_temp(
-                    url, headers, timeout=timeout, max_bytes=DEFAULT_MAX_DOWNLOAD_BYTES
+                    url,
+                    headers,
+                    timeout=effective_timeout,
+                    max_bytes=DEFAULT_MAX_DOWNLOAD_BYTES,
                 )
         except requests.RequestException as e:
             return ExtractResult(ok=False, reason=f"下载失败: {type(e).__name__}: {e}", source_url=url)
@@ -281,6 +307,68 @@ def download_and_extract(
         return extract_bytes(data, url=url, content_type=ctype)
     finally:
         safe_unlink(tmp_path)
+
+
+def resolve_and_extract_prd(
+    url: str,
+    token: str | None = None,
+    *,
+    repo_key: str | None = None,
+    ref: str | None = None,
+    timeout: int | tuple[int, int] = 60,
+) -> ExtractResult:
+    """Resolve PRD text: GitHub Contents API / HTTP download / repo PRD fallback.
+
+    Order:
+      1. github blob/raw URL → Contents API (works when github.com HTTPS hangs)
+      2. Direct HTTP download of the attachment URL
+      3. On failure: search the PR head tree for a PRD pdf/docx and fetch via API
+    """
+    from biz.prd.github_prd_source import (
+        parse_github_repo_file_url,
+        resolve_prd_bytes_via_github_api,
+    )
+
+    if not url:
+        return ExtractResult(ok=False, reason="附件 URL 为空")
+
+    # Fast path: repo blob/raw → API (skip hanging github.com / raw.githubusercontent.com)
+    if token and parse_github_repo_file_url(url):
+        data, source = resolve_prd_bytes_via_github_api(
+            url=url, token=token, repo_key=repo_key, ref=ref
+        )
+        if data:
+            result = extract_bytes(data, url=url)
+            if result.ok:
+                logger.info("PRD resolved via %s", source)
+            return result
+
+    http_result = download_and_extract(url, token, timeout=timeout)
+    if http_result.ok:
+        return http_result
+
+    # Domestic ECS: user-attachments often ReadTimeout; fall back to repo PRD.
+    if token and repo_key and ref:
+        data, source = resolve_prd_bytes_via_github_api(
+            url=url, token=token, repo_key=repo_key, ref=ref
+        )
+        if data:
+            result = extract_bytes(data, url=url)
+            if result.ok:
+                logger.info(
+                    "PRD HTTP failed (%s); recovered via %s",
+                    http_result.reason,
+                    source,
+                )
+                return result
+            return result
+        return ExtractResult(
+            ok=False,
+            reason=f"{http_result.reason}；{source}",
+            source_url=url,
+        )
+
+    return http_result
 
 
 def extract_local_file(path: str | Path) -> ExtractResult:

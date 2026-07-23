@@ -39,7 +39,7 @@ class TestMaybePostRequirementReview:
     def test_parse_failure_comment(self):
         notes = MagicMock()
         with patch(
-            "biz.prd.pipeline.download_and_extract",
+            "biz.prd.pipeline.resolve_and_extract_prd",
             return_value=MagicMock(ok=False, reason="HTTP 403", text=""),
         ):
             result = maybe_post_requirement_review(
@@ -61,7 +61,7 @@ class TestMaybePostRequirementReview:
     def test_success_posts_requirement_header(self):
         notes = MagicMock()
         with patch(
-            "biz.prd.pipeline.download_and_extract",
+            "biz.prd.pipeline.resolve_and_extract_prd",
             return_value=MagicMock(ok=True, reason="", text="PRD正文"),
         ):
             with patch("biz.prd.pipeline.RequirementReviewer") as MockRR:

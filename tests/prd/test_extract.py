@@ -9,6 +9,7 @@ from biz.prd.extract import (
     download_and_extract,
     extract_bytes,
     prd_tmp_root,
+    resolve_and_extract_prd,
 )
 
 
@@ -74,3 +75,34 @@ class TestDownloadCleanup:
         n = cleanup_stale_prd_temps(max_age_seconds=1)
         assert n == 1
         assert not stale.exists()
+
+
+class TestResolveAndExtractPrd:
+    def test_http_timeout_falls_back_to_repo_api(self):
+        data = _make_docx_bytes("仓库内 PRD 回退成功")
+        with patch(
+            "biz.prd.extract.download_and_extract",
+            return_value=type(
+                "R",
+                (),
+                {
+                    "ok": False,
+                    "reason": "下载失败: ReadTimeout",
+                    "text": "",
+                    "source_url": "https://github.com/user-attachments/files/1/a.docx",
+                    "content_type": "",
+                },
+            )(),
+        ):
+            with patch(
+                "biz.prd.github_prd_source.resolve_prd_bytes_via_github_api",
+                return_value=(data, "contents-api-fallback:o/r/doc/a.docx@sha"),
+            ):
+                result = resolve_and_extract_prd(
+                    "https://github.com/user-attachments/files/1/a.docx",
+                    token="t",
+                    repo_key="o/r",
+                    ref="sha",
+                )
+        assert result.ok is True
+        assert "回退成功" in result.text
