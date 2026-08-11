@@ -25,7 +25,7 @@ from streamlit_cookies_manager import CookieManager
 load_dotenv("conf/.env")
 
 from biz.service.review_service import ReviewService
-from biz.utils.review_report_format import count_prd_reviews, summarize_review_for_table
+from biz.utils.dashboard_view import count_prd_reviews, enrich_review_frame, filter_enriched_frame
 
 ReviewService.init_db()
 
@@ -341,6 +341,20 @@ st.markdown(
         font-size: 0.82rem;
         color: #5b6b7c;
     }
+    div[data-testid="stMetric"] {
+        background: rgba(255,255,255,0.78);
+        border: 1px solid #d7e0ea;
+        border-radius: 12px;
+        padding: 0.55rem 0.75rem 0.65rem;
+        margin-bottom: 0.35rem;
+    }
+    .detail-panel {
+        margin: 0.5rem 0 1rem;
+        padding: 1rem 1.1rem;
+        border: 1px solid #d7e0ea;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.85);
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -386,9 +400,9 @@ def login_page():
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-# 单列展示用较小画布，便于一行多图
-_DEFAULT_CHART_FIGSIZE = (3.8, 3.2)
-_DEFAULT_XTICK_FONT = 8
+# 2×2 图表画布
+_DEFAULT_CHART_FIGSIZE = (5.5, 3.6)
+_DEFAULT_XTICK_FONT = 9
 
 
 # 生成项目提交数量图表
@@ -527,9 +541,15 @@ def logout():
 PRO_VERSION_URL = "https://github.com/JerryFish123/ai-cr-lab"
 
 
+def _row_label(row) -> str:
+    project = row.get("project_name") or ""
+    author = row.get("author") or ""
+    when = row.get("updated_at") or ""
+    return f"{project} · {author} · {when}"
+
+
 # 主要内容
 def main_page():
-    # 顶部导航：一行内标题 + 退出 / Pro（减少垂直留白）
     head_left, head_right = st.columns([7.2, 2.8])
     with head_left:
         st.markdown(
@@ -540,7 +560,6 @@ def main_page():
             unsafe_allow_html=True,
         )
     with head_right:
-        # 两列分别放退出登录、Pro 版，靠右对齐
         sub_col_logout, sub_col_pro = st.columns([1.3, 1.5])
         with sub_col_logout:
             if st.button("退出登录", key="logout_button", use_container_width=True):
@@ -555,8 +574,6 @@ def main_page():
 
     current_date = datetime.date.today()
     start_date_default = current_date - datetime.timedelta(days=7)
-
-    # 根据环境变量决定是否显示 push_tab
     show_push_tab = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'
 
     if show_push_tab:
@@ -564,65 +581,58 @@ def main_page():
     else:
         mr_tab = st.container()
 
-    def display_data(tab, service_func, columns, column_config):
+    def display_data(tab, service_func, columns, column_config, *, has_url: bool):
         with tab:
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
+            f1, f2, f3, f4 = st.columns(4)
+            with f1:
                 start_date = st.date_input("开始日期", start_date_default, key=f"{tab}_start_date")
-            with col2:
+            with f2:
                 end_date = st.date_input("结束日期", current_date, key=f"{tab}_end_date")
 
             start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
             end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
 
-            data = get_data(service_func, updated_at_gte=int(start_datetime.timestamp()),
-                            updated_at_lte=int(end_datetime.timestamp()), columns=columns)
-            df = pd.DataFrame(data)
+            # Single DB fetch for date range; filter locally afterwards.
+            raw = get_data(
+                service_func,
+                updated_at_gte=int(start_datetime.timestamp()),
+                updated_at_lte=int(end_datetime.timestamp()),
+                columns=columns,
+            )
+            base_df = enrich_review_frame(pd.DataFrame(raw))
 
-            unique_authors = sorted(df["author"].dropna().unique().tolist()) if not df.empty else []
-            unique_projects = sorted(df["project_name"].dropna().unique().tolist()) if not df.empty else []
-            with col3:
+            unique_authors = sorted(base_df["author"].dropna().unique().tolist()) if not base_df.empty else []
+            unique_projects = sorted(base_df["project_name"].dropna().unique().tolist()) if not base_df.empty else []
+
+            with f3:
                 authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
-            with col4:
+            with f4:
                 project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
 
-            data = get_data(service_func, authors=authors, project_names=project_names,
-                            updated_at_gte=int(start_datetime.timestamp()),
-                            updated_at_lte=int(end_datetime.timestamp()), columns=columns)
-            df = pd.DataFrame(data)
-
-            if "review_result" in df.columns and not df.empty:
-                df["summary"] = df["review_result"].apply(summarize_review_for_table)
-            elif not df.empty:
-                df["summary"] = "—"
-
-            display_cols = [c for c in columns if c != "review_result"]
-            if "summary" in df.columns and "summary" not in display_cols:
-                # Place summary before url when present
-                if "url" in display_cols:
-                    idx = display_cols.index("url")
-                    display_cols = display_cols[:idx] + ["summary"] + display_cols[idx:]
-                else:
-                    display_cols = display_cols + ["summary"]
-
-            if df.empty:
-                st.markdown(
-                    '<div class="empty-panel">'
-                    "<h3>暂无审查记录</h3>"
-                    "<p>在业务仓库配置 Webhook 指向 "
-                    "<code>/review/webhook</code> 后，合并请求或推送产生的审查会显示在这里。</p>"
-                    "</div>",
-                    unsafe_allow_html=True,
+            f5, f6 = st.columns(2)
+            with f5:
+                prd_filter = st.selectbox(
+                    "PRD 状态",
+                    ["全部", "含PRD", "无PRD", "旧格式"],
+                    key=f"{tab}_prd_filter",
                 )
-            else:
-                st.data_editor(
-                    df[display_cols],
-                    use_container_width=True,
-                    column_config=column_config
+            with f6:
+                risk_filter = st.selectbox(
+                    "风险状态",
+                    ["全部", "有风险", "无明显风险"],
+                    key=f"{tab}_risk_filter",
                 )
+
+            df = filter_enriched_frame(
+                base_df,
+                authors=authors,
+                project_names=project_names,
+                prd_filter=prd_filter,
+                risk_filter=risk_filter,
+            )
 
             total_records = len(df)
-            project_count = df["project_name"].nunique() if not df.empty else 0
+            project_count = int(df["project_name"].nunique()) if not df.empty else 0
             if not df.empty and "additions" in df.columns and "deletions" in df.columns:
                 total_lines = int(df["additions"].fillna(0).sum() + df["deletions"].fillna(0).sum())
             else:
@@ -635,33 +645,71 @@ def main_page():
             m3.metric("代码变更总行数", total_lines)
             m4.metric("含 PRD 审查次数", prd_count)
 
-            chart_title_css = "<div style='text-align:center;font-size:clamp(11px,0.95vw,14px);line-height:1.2;margin:0 0 0.2rem 0;'><b>{}</b></div>"
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
+            if df.empty:
+                st.markdown(
+                    '<div class="empty-panel">'
+                    "<h3>暂无审查记录</h3>"
+                    "<p>在业务仓库配置 Webhook 指向 "
+                    "<code>/review/webhook</code> 后，合并请求或推送产生的审查会显示在这里；"
+                    "也可放宽上方日期 / PRD / 风险筛选后再试。</p>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                return
+
+            display_cols = [
+                c for c in [
+                    "project_name", "author", "source_branch", "target_branch", "branch",
+                    "updated_at", "delta", "kind_label", "summary", "url",
+                ]
+                if c in df.columns
+            ]
+            st.dataframe(
+                df[display_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+            )
+
+            labels = [_row_label(row) for _, row in df.iterrows()]
+            selected = st.selectbox("查看完整审查报告", labels, key=f"{tab}_detail_pick")
+            row = df.iloc[labels.index(selected)]
+            report = str(row.get("review_result") or "").strip() or "_（无审查正文）_"
+            st.markdown('<div class="detail-panel">', unsafe_allow_html=True)
+            st.markdown(report)
+            if has_url and row.get("url"):
+                st.markdown(f"[打开 PR/MR]({row.get('url')})")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            chart_title_css = (
+                "<div style='text-align:center;font-size:clamp(12px,1vw,15px);"
+                "line-height:1.2;margin:0.4rem 0 0.25rem 0;'><b>{}</b></div>"
+            )
+            r1c1, r1c2 = st.columns(2)
+            with r1c1:
                 st.markdown(chart_title_css.format("项目审查次数"), unsafe_allow_html=True)
                 generate_project_count_chart(df)
-            with c2:
+            with r1c2:
                 st.markdown(chart_title_css.format("开发者审查次数"), unsafe_allow_html=True)
                 generate_author_count_chart(df)
-            with c3:
+            r2c1, r2c2 = st.columns(2)
+            with r2c1:
                 st.markdown(chart_title_css.format("项目变更行数"), unsafe_allow_html=True)
                 if 'additions' in df.columns and 'deletions' in df.columns:
                     generate_project_code_line_chart(df)
                 else:
                     st.info("无法显示代码行数图表：缺少必要的数据列")
-            with c4:
+            with r2c2:
                 st.markdown(chart_title_css.format("开发者变更行数"), unsafe_allow_html=True)
                 if 'additions' in df.columns and 'deletions' in df.columns:
                     generate_author_code_line_chart(df)
                 else:
                     st.info("无法显示代码行数图表：缺少必要的数据列")
 
-    # Merge Request 数据展示
     mr_columns = [
         "project_name", "author", "source_branch", "target_branch", "updated_at",
         "delta", "url", "review_result", "additions", "deletions",
     ]
-
     mr_column_config = {
         "project_name": "项目名称",
         "author": "开发者",
@@ -669,39 +717,39 @@ def main_page():
         "target_branch": "目标分支",
         "updated_at": "更新时间",
         "delta": "变更行数",
+        "kind_label": "类型",
         "summary": "审查摘要",
-        "url": st.column_config.LinkColumn(
-            "PR 链接",
-            max_chars=100,
-            display_text="打开"
-        ),
-        "additions": None,
-        "deletions": None,
-        "review_result": None,
+        "url": st.column_config.LinkColumn("PR 链接", max_chars=100, display_text="打开"),
     }
+    display_data(
+        mr_tab,
+        ReviewService().get_mr_review_logs,
+        mr_columns,
+        mr_column_config,
+        has_url=True,
+    )
 
-    display_data(mr_tab, ReviewService().get_mr_review_logs, mr_columns, mr_column_config)
-
-    # Push 数据展示
     if show_push_tab:
         push_columns = [
             "project_name", "author", "branch", "updated_at",
             "delta", "review_result", "additions", "deletions",
         ]
-
         push_column_config = {
             "project_name": "项目名称",
             "author": "开发者",
             "branch": "分支",
             "updated_at": "更新时间",
             "delta": "变更行数",
+            "kind_label": "类型",
             "summary": "审查摘要",
-            "additions": None,
-            "deletions": None,
-            "review_result": None,
         }
-
-        display_data(push_tab, ReviewService().get_push_review_logs, push_columns, push_column_config)
+        display_data(
+            push_tab,
+            ReviewService().get_push_review_logs,
+            push_columns,
+            push_column_config,
+            has_url=False,
+        )
 
 
 # 应用入口

@@ -136,51 +136,17 @@ def normalize_triple_report(
 
 
 def summarize_review_for_table(review_result: str, max_len: int = 80) -> str:
-    """Short summary for dashboard table."""
-    text = (review_result or "").strip()
-    if not text:
-        return "—"
-    if PRD_MISSING_MESSAGE in text:
-        risk = _extract_section_body(text, _SECTION3_RE, [])
-        bullets = re.findall(r"^\s*[-*•]\s+(.+)$", risk, re.M)
-        if bullets and "未发现" not in bullets[0]:
-            return f"无PRD · 风险{min(len(bullets), 9)}项"[:max_len]
-        return "无PRD · 仅风险评价"
-    uncovered = 0
-    if "未覆盖" in text:
-        sec = _extract_section_body(text, _SECTION1_RE, [_SECTION2_RE, _SECTION3_RE])
-        uncovered = len(
-            [
-                ln
-                for ln in sec.splitlines()
-                if re.match(r"^\s*[-*•]\s+", ln)
-                and "无未覆盖" not in ln
-                and "未发现" not in ln
-            ]
-        )
-    risk_sec = _extract_section_body(text, _SECTION3_RE, [])
-    risks = len(
-        [
-            ln
-            for ln in risk_sec.splitlines()
-            if re.match(r"^\s*[-*•]\s+", ln) and "未发现" not in ln
-        ]
-    )
-    return f"未覆盖{uncovered} · 风险{risks}"[:max_len]
+    """Short summary for dashboard table (delegates to dashboard_view)."""
+    from biz.utils.dashboard_view import summarize_review_for_table as _summarize
+
+    return _summarize(review_result, max_len=max_len)
 
 
 def count_prd_reviews(series_or_list) -> int:
-    """Count rows whose review_result looks like a PRD-backed triple review."""
-    n = 0
-    for val in series_or_list:
-        text = str(val or "")
-        if not text:
-            continue
-        if PRD_MISSING_MESSAGE in text:
-            continue
-        if "PRD 覆盖情况" in text or "PRD覆盖情况" in text:
-            n += 1
-    return n
+    """Count with_prd rows (delegates to dashboard_view; same source as kind)."""
+    from biz.utils.dashboard_view import count_prd_reviews as _count
+
+    return _count(series_or_list)
 
 
 def prioritize_uncovered_requirements(report: str) -> str:
