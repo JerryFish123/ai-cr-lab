@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 
+# Avoid ReviewService connecting to MySQL during import in unit tests.
+os.environ.setdefault("REVIEW_DB_AUTO_INIT", "0")
+
 
 @pytest.fixture
 def tmp_repo(tmp_path: Path) -> Path:

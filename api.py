@@ -10,10 +10,13 @@ import os
 
 from biz.api import api_app, init_app
 from biz.api.scheduler import setup_scheduler
+from biz.service.review_service import ReviewService
 from biz.utils.config_checker import check_config
 
 # 初始化应用并注册路由
 init_app(api_app)
+# Ensure MySQL review tables exist (no-op if already initialized).
+ReviewService.init_db()
 
 if __name__ == '__main__':
     check_config()

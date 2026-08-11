@@ -1,4 +1,25 @@
 services:
+  mysql:
+    image: mysql:8.0
+    # 账号/库名/密码全部来自 conf/.env（勿再用 host 插值覆盖，以免不一致）
+    env_file:
+      - ./conf/.env
+    environment:
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --explicit_defaults_for_timestamp=1
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
   app:
     build:
       context: .
@@ -13,4 +34,14 @@ services:
       - ./conf/.env:/app/conf/.env:ro
     env_file:
       - ./conf/.env
+    environment:
+      # 容器网络内固定连 compose 服务名；其余账号库名来自 conf/.env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  mysql_data:

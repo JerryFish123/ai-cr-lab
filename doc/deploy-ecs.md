@@ -12,8 +12,11 @@ git push origin publish
   → SSH 登录 ECS
   → git reset --hard origin/publish
   → docker compose up -d --build
+  → MySQL healthy 后 app 建表
   → 服务监听 :5001 / :5002
 ```
+
+审查日志存 **Compose 内 MySQL**（`MYSQL_*` 配在 `conf/.env`）；不使用本地 `data/data.db`。
 
 密钥分工：
 

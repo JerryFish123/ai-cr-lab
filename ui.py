@@ -19,12 +19,14 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
 import streamlit as st
-
-from biz.service.review_service import ReviewService
 from matplotlib.ticker import MaxNLocator
 from streamlit_cookies_manager import CookieManager
 
 load_dotenv("conf/.env")
+
+from biz.service.review_service import ReviewService
+
+ReviewService.init_db()
 
 
 def set_global_font():

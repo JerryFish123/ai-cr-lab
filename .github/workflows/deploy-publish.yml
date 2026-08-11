@@ -52,7 +52,11 @@ jobs:
               LLM_PROVIDER \
               GITHUB_ACCESS_TOKEN \
               REVIEW_STRATEGY \
-              GIT_CLONE_MIRROR_PREFIX
+              GIT_CLONE_MIRROR_PREFIX \
+              MYSQL_HOST \
+              MYSQL_USER \
+              MYSQL_PASSWORD \
+              MYSQL_DATABASE
             do
               if ! grep -qE "^${key}=.+" conf/.env; then
                 echo "ERROR: conf/.env 缺少或为空: ${key}"
