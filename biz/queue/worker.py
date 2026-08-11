@@ -11,7 +11,7 @@ from biz.platforms.gitea.webhook_handler import filter_changes as filter_gitea_c
 from biz.service.review_service import ReviewService
 from biz.agent.agentic_reviewer import AgenticReviewError
 from biz.prd.description import extract_description_body, parse_prd_intent
-from biz.prd.pipeline import maybe_post_requirement_review
+from biz.review.triple_review import run_triple_review
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.im.review_notify import (
@@ -20,33 +20,7 @@ from biz.utils.im.review_notify import (
     pr_meta_from_webhook,
 )
 from biz.utils.log import logger
-from biz.utils.review_report_format import trim_quality_report_for_publish
-
-
-def _post_prd_requirement_if_needed(
-    *,
-    webhook_data: dict,
-    access_token: str,
-    platform_url: str,
-    changes: list,
-    commits_text: str,
-    add_notes,
-) -> str | None:
-    """Second comment: 需求完成情况 (only when PRD attachment present).
-
-    Returns posted note body for DingTalk digest, or None if skipped.
-    """
-    repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, platform_url)
-    return maybe_post_requirement_review(
-        webhook_data=webhook_data,
-        access_token=access_token,
-        changes=changes,
-        commits_text=commits_text,
-        add_notes=add_notes,
-        repo_url=repo_url,
-        repo_key=repo_key,
-        ref=ref,
-    )
+from biz.utils.review_report_format import normalize_triple_report, trim_quality_report_for_publish
 
 
 def _prd_intent_for_webhook(webhook_data: dict):
@@ -81,8 +55,7 @@ def _notify_review_finished_for_pr(
     *,
     webhook_data: dict,
     url_slug: str,
-    quality_report: str,
-    requirement_report: str | None,
+    review_report: str,
     has_prd: bool,
 ) -> None:
     meta = pr_meta_from_webhook(webhook_data)
@@ -90,8 +63,8 @@ def _notify_review_finished_for_pr(
         project_name=meta["project_name"],
         author=meta["author"],
         url=meta["url"],
-        quality_report=quality_report,
-        requirement_report=requirement_report,
+        quality_report=review_report,
+        requirement_report=None,
         has_prd=has_prd,
         url_slug=url_slug,
         webhook_data=webhook_data,
@@ -123,7 +96,7 @@ def _resolve_repo_for_event(webhook_data: dict, gitlab_url: str = "") -> tuple[s
         if path and url and ref:
             return url, path, ref
         return None, None, None
-    # GitHub
+    # GitHub / Gitea PR
     if "repository" in webhook_data and "pull_request" in webhook_data:
         repo = webhook_data["repository"]
         url = repo.get("clone_url") or repo.get("html_url")
@@ -141,44 +114,49 @@ def _resolve_repo_for_event(webhook_data: dict, gitlab_url: str = "") -> tuple[s
         if path and url and ref:
             return url, path, ref
         return None, None, None
-    # Gitea (similar shape to GitHub but `pusher` may be present).
     return None, None, None
 
 
-def _review_with_strategy(changes: list, commits_text: str, webhook_data: dict, gitlab_url: str) -> str:
-    """Pick review strategy based on REVIEW_STRATEGY env var."""
+def _run_code_review(
+    *,
+    changes: list,
+    commits_text: str,
+    webhook_data: dict,
+    access_token: str,
+    platform_url: str,
+) -> str:
+    """Single three-section review report (agentic triple, or diff_only fallback)."""
     strategy = os.getenv("REVIEW_STRATEGY", "diff_only")
-    if strategy != "agentic":
-        report = CodeReviewer().review_and_strip_code(str(changes), commits_text)
-        return trim_quality_report_for_publish(report)
+    repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, platform_url)
 
-    # Agentic mode — failures notify DingTalk and raise (no diff_only fallback).
-    from biz.agent.agentic_reviewer import AgenticReviewer, _fail_agentic
-    repo_url, repo_key, ref = _resolve_repo_for_event(webhook_data, gitlab_url)
-    if not (repo_url and repo_key and ref):
-        _fail_agentic(
-            "无法从 webhook 解析仓库地址/项目/ref，无法启动 agentic",
-            project=str(repo_key or ""),
-            ref=str(ref or ""),
-        )
-    cache_root = os.getenv("REPO_CACHE_DIR", "data/repo_cache")
-    try:
-        reviewer = AgenticReviewer(
+    if strategy == "agentic":
+        return run_triple_review(
+            changes=changes,
+            commits_text=commits_text,
+            webhook_data=webhook_data,
+            access_token=access_token,
+            platform_url=platform_url,
             repo_url=repo_url,
             repo_key=repo_key,
             ref=ref,
-            cache_root=cache_root,
         )
-        report = reviewer.review(diffs_text=str(changes), commits_text=commits_text)
-        return trim_quality_report_for_publish(report)
-    except AgenticReviewError:
-        raise
-    except Exception as e:
-        _fail_agentic(
-            f"agentic 未预期异常: {e}",
-            project=str(repo_key or ""),
-            ref=str(ref or ""),
+
+    # diff_only: still emit triple shape; no PRD probe.
+    report = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+    report = trim_quality_report_for_publish(report)
+    intent = parse_prd_intent(extract_description_body(webhook_data))
+    if intent.should_run_requirement_review:
+        return normalize_triple_report(
+            (
+                "### 1. PRD 覆盖情况\n\n"
+                "- （当前为 diff_only，未做 PRD 探查；请设置 REVIEW_STRATEGY=agentic）\n\n"
+                "### 2. 非 PRD 范围的潜在波及\n\n"
+                "- （同上）\n\n"
+                f"### 3. 安全与性能风险\n\n{report or '- 未发现明显安全或性能风险'}"
+            ),
+            has_prd=True,
         )
+    return normalize_triple_report("", has_prd=False, risk_section=report)
 
 
 def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gitlab_url_slug: str):
@@ -196,7 +174,6 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
         additions = 0
         deletions = 0
         if push_review_enabled:
-            # 获取PUSH的changes
             changes = handler.get_push_changes()
             logger.info('changes: %s', changes)
             changes = filter_changes(changes)
@@ -206,19 +183,23 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = _review_with_strategy(changes, commits_text, webhook_data, gitlab_url)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
+                review_result = _run_code_review(
+                    changes=changes,
+                    commits_text=commits_text,
+                    webhook_data=webhook_data,
+                    access_token=gitlab_token,
+                    platform_url=gitlab_url,
+                )
                 for item in changes:
                     additions += item['additions']
                     deletions += item['deletions']
-            # 将review结果提交到Gitlab的 notes
             handler.add_push_notes(f'Auto Review Result: \n{review_result}')
 
         event_manager['push_reviewed'].send(PushReviewEntity(
             project_name=webhook_data['project']['name'],
             author=webhook_data['user_username'],
             branch=webhook_data.get('ref', '').replace('refs/heads/', ''),
-            updated_at=int(datetime.now().timestamp()),  # 当前时间
+            updated_at=int(datetime.now().timestamp()),
             commits=commits,
             score=score,
             review_result=review_result,
@@ -239,19 +220,12 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
 def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gitlab_url_slug: str):
     '''
     处理Merge Request Hook事件
-    :param webhook_data:
-    :param gitlab_token:
-    :param gitlab_url:
-    :param gitlab_url_slug:
-    :return:
     '''
     merge_review_only_protected_branches = os.environ.get('MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED', '0') == '1'
     try:
-        # 解析Webhook数据
         handler = MergeRequestHandler(webhook_data, gitlab_token, gitlab_url)
         logger.info('Merge Request Hook event received')
 
-        # 新增：判断是否为draft（草稿）MR
         object_attributes = webhook_data.get('object_attributes', {})
         is_draft = object_attributes.get('draft') or object_attributes.get('work_in_progress')
         if is_draft:
@@ -260,7 +234,6 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             logger.info("MR为draft，仅发送通知，不触发AI review。")
             return
 
-        # 如果开启了仅review projected branches的，判断当前目标分支是否为projected branches
         if merge_review_only_protected_branches and not handler.target_branch_protected():
             logger.info("Merge Request target branch not match protected branches, ignored.")
             return
@@ -269,33 +242,28 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             logger.info(f"Merge Request Hook event, action={handler.action}, ignored.")
             return
 
-        # 检查last_commit_id是否已经存在，如果存在则跳过处理
         last_commit_id = object_attributes.get('last_commit', {}).get('id', '')
         if last_commit_id:
             project_name = webhook_data['project']['name']
             source_branch = object_attributes.get('source_branch', '')
             target_branch = object_attributes.get('target_branch', '')
-            
+
             if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, last_commit_id):
                 logger.info(f"Merge Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}.")
                 return
 
-        # 仅仅在MR创建或更新时进行Code Review
-        # 获取Merge Request的changes
         changes = handler.get_merge_request_changes()
         logger.info('changes: %s', changes)
         changes = filter_changes(changes)
         if not changes:
             logger.info('未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。')
             return
-        # 统计本次新增、删除的代码总数
         additions = 0
         deletions = 0
         for item in changes:
             additions += item.get('additions', 0)
             deletions += item.get('deletions', 0)
 
-        # 获取Merge Request的commits
         commits = handler.get_merge_request_commits()
         if not commits:
             logger.error('Failed to get commits')
@@ -307,32 +275,24 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             file_count=len(changes),
         )
 
-        # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = _review_with_strategy(changes, commits_text, webhook_data, gitlab_url)
-
-        # 将review结果提交到Gitlab的 notes（代码质量）
-        handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
-
-        # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
-        requirement_report = _post_prd_requirement_if_needed(
+        review_result = _run_code_review(
+            changes=changes,
+            commits_text=commits_text,
             webhook_data=webhook_data,
             access_token=gitlab_token,
             platform_url=gitlab_url,
-            changes=changes,
-            commits_text=commits_text,
-            add_notes=handler.add_merge_request_notes,
         )
+
+        handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
 
         _notify_review_finished_for_pr(
             webhook_data=webhook_data,
             url_slug=gitlab_url_slug,
-            quality_report=review_result,
-            requirement_report=requirement_report,
+            review_report=review_result,
             has_prd=has_prd,
         )
 
-        # dispatch merge_request_reviewed event
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
                 project_name=webhook_data['project']['name'],
@@ -341,7 +301,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 target_branch=webhook_data['object_attributes']['target_branch'],
                 updated_at=int(datetime.now().timestamp()),
                 commits=commits,
-                score=CodeReviewer.parse_review_score(review_text=review_result),
+                score=0,
                 url=webhook_data['object_attributes']['url'],
                 review_result=review_result,
                 url_slug=gitlab_url_slug,
@@ -359,6 +319,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         notifier.send_notification(content=error_message)
         logger.error('出现未知错误: %s', error_message)
 
+
 def handle_github_push_event(webhook_data: dict, github_token: str, github_url: str, github_url_slug: str):
     push_review_enabled = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'
     try:
@@ -374,7 +335,6 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
         additions = 0
         deletions = 0
         if push_review_enabled:
-            # 获取PUSH的changes
             changes = handler.get_push_changes()
             logger.info('changes: %s', changes)
             changes = filter_github_changes(changes)
@@ -384,19 +344,23 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = _review_with_strategy(changes, commits_text, webhook_data, github_url)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
+                review_result = _run_code_review(
+                    changes=changes,
+                    commits_text=commits_text,
+                    webhook_data=webhook_data,
+                    access_token=github_token,
+                    platform_url=github_url,
+                )
                 for item in changes:
                     additions += item.get('additions', 0)
                     deletions += item.get('deletions', 0)
-            # 将review结果提交到GitHub的 notes
             handler.add_push_notes(f'Auto Review Result: \n{review_result}')
 
         event_manager['push_reviewed'].send(PushReviewEntity(
             project_name=webhook_data['repository']['name'],
             author=webhook_data['sender']['login'],
             branch=webhook_data['ref'].replace('refs/heads/', ''),
-            updated_at=int(datetime.now().timestamp()),  # 当前时间
+            updated_at=int(datetime.now().timestamp()),
             commits=commits,
             score=score,
             review_result=review_result,
@@ -417,18 +381,11 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
 def handle_github_pull_request_event(webhook_data: dict, github_token: str, github_url: str, github_url_slug: str):
     '''
     处理GitHub Pull Request 事件
-    :param webhook_data:
-    :param github_token:
-    :param github_url:
-    :param github_url_slug:
-    :return:
     '''
     merge_review_only_protected_branches = os.environ.get('MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED', '0') == '1'
     try:
-        # 解析Webhook数据
         handler = GithubPullRequestHandler(webhook_data, github_token, github_url)
         logger.info('GitHub Pull Request event received')
-        # 如果开启了仅review projected branches的，判断当前目标分支是否为projected branches
         if merge_review_only_protected_branches and not handler.target_branch_protected():
             logger.info("Merge Request target branch not match protected branches, ignored.")
             return
@@ -437,33 +394,28 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
             logger.info(f"Pull Request Hook event, action={handler.action}, ignored.")
             return
 
-        # 检查GitHub Pull Request的last_commit_id是否已经存在，如果存在则跳过处理
         github_last_commit_id = webhook_data['pull_request']['head']['sha']
         if github_last_commit_id:
             project_name = webhook_data['repository']['name']
             source_branch = webhook_data['pull_request']['head']['ref']
             target_branch = webhook_data['pull_request']['base']['ref']
-            
+
             if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, github_last_commit_id):
                 logger.info(f"Pull Request with last_commit_id {github_last_commit_id} already exists, skipping review for {project_name}.")
                 return
 
-        # 仅仅在PR创建或更新时进行Code Review
-        # 获取Pull Request的changes
         changes = handler.get_pull_request_changes()
         logger.info('changes: %s', changes)
         changes = filter_github_changes(changes)
         if not changes:
             logger.info('未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。')
             return
-        # 统计本次新增、删除的代码总数
         additions = 0
         deletions = 0
         for item in changes:
             additions += item.get('additions', 0)
             deletions += item.get('deletions', 0)
 
-        # 获取Pull Request的commits
         commits = handler.get_pull_request_commits()
         if not commits:
             logger.error('Failed to get commits')
@@ -475,32 +427,24 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
             file_count=len(changes),
         )
 
-        # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = _review_with_strategy(changes, commits_text, webhook_data, github_url)
-
-        # 将review结果提交到GitHub的 notes（代码质量）
-        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
-
-        # 条件触发：需求完成情况（PR 描述含 PRD 附件时）
-        requirement_report = _post_prd_requirement_if_needed(
+        review_result = _run_code_review(
+            changes=changes,
+            commits_text=commits_text,
             webhook_data=webhook_data,
             access_token=github_token,
             platform_url=github_url,
-            changes=changes,
-            commits_text=commits_text,
-            add_notes=handler.add_pull_request_notes,
         )
+
+        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
         _notify_review_finished_for_pr(
             webhook_data=webhook_data,
             url_slug=github_url_slug,
-            quality_report=review_result,
-            requirement_report=requirement_report,
+            review_report=review_result,
             has_prd=has_prd,
         )
 
-        # dispatch pull_request_reviewed event
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
                 project_name=webhook_data['repository']['name'],
@@ -509,7 +453,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 target_branch=webhook_data['pull_request']['base']['ref'],
                 updated_at=int(datetime.now().timestamp()),
                 commits=commits,
-                score=CodeReviewer.parse_review_score(review_text=review_result),
+                score=0,
                 url=webhook_data['pull_request']['html_url'],
                 review_result=review_result,
                 url_slug=github_url_slug,
@@ -551,8 +495,13 @@ def handle_gitea_push_event(webhook_data: dict, gitea_token: str, gitea_url: str
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = _review_with_strategy(changes, commits_text, webhook_data, gitea_url)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
+                review_result = _run_code_review(
+                    changes=changes,
+                    commits_text=commits_text,
+                    webhook_data=webhook_data,
+                    access_token=gitea_token,
+                    platform_url=gitea_url,
+                )
                 for item in changes:
                     additions += item.get('additions', 0)
                     deletions += item.get('deletions', 0)
@@ -638,24 +587,20 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
             file_count=len(changes),
         )
 
-        review_result = _review_with_strategy(changes, commits_text, webhook_data, gitea_url)
-
-        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
-
-        requirement_report = _post_prd_requirement_if_needed(
+        review_result = _run_code_review(
+            changes=changes,
+            commits_text=commits_text,
             webhook_data=webhook_data,
             access_token=gitea_token,
             platform_url=gitea_url,
-            changes=changes,
-            commits_text=commits_text,
-            add_notes=handler.add_pull_request_notes,
         )
+
+        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
         _notify_review_finished_for_pr(
             webhook_data=webhook_data,
             url_slug=gitea_url_slug,
-            quality_report=review_result,
-            requirement_report=requirement_report,
+            review_report=review_result,
             has_prd=has_prd,
         )
 
@@ -670,7 +615,7 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
                 target_branch=base_info.get('ref') or pull_request.get('base_branch', ''),
                 updated_at=int(datetime.now().timestamp()),
                 commits=commits,
-                score=CodeReviewer.parse_review_score(review_text=review_result),
+                score=0,
                 url=pull_request.get('html_url') or pull_request.get('url'),
                 review_result=review_result,
                 url_slug=gitea_url_slug,

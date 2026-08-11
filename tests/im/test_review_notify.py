@@ -9,6 +9,7 @@ from biz.utils.im.review_notify import (
     format_review_started_markdown,
     pr_meta_from_webhook,
 )
+from biz.utils.review_report_format import PRD_MISSING_MESSAGE, normalize_triple_report
 
 
 class TestEstimateReviewMinutes:
@@ -64,7 +65,7 @@ class TestFormatMessages:
             project_name="demo",
             author="alice",
             url="https://example.com/pr/1",
-            digest_body="#### 潜在风险问题\n- SQL 注入风险",
+            digest_body="#### 3. 安全与性能风险\n- SQL 注入风险",
         )
         assert "审查完成：demo" in md
         assert "SQL 注入风险" in md
@@ -72,53 +73,50 @@ class TestFormatMessages:
 
 
 class TestFallbackDigest:
-    def test_keeps_only_risk_bullets(self):
-        quality = """
-# 代码审查报告
-- 变量命名不规范
-- 存在 SQL 注入风险，用户输入未校验
-- 建议增加单元测试
-总分:80分
-"""
+    def test_no_prd_fixed_and_risk(self):
+        quality = normalize_triple_report(
+            "",
+            has_prd=False,
+            risk_section="- 存在 SQL 注入风险，用户输入未校验",
+        )
         out = fallback_digest(quality, None)
-        assert "潜在风险问题" in out
+        assert "1. PRD 覆盖" in out
+        assert PRD_MISSING_MESSAGE in out
+        assert "3. 安全与性能风险" in out
         assert "SQL 注入" in out
-        assert "命名不规范" not in out
         assert "总分" not in out
 
     def test_no_risk_message(self):
-        out = fallback_digest("- 命名可以更好\n总分:90分", None)
-        assert "未发现严重问题" in out
+        quality = normalize_triple_report("", has_prd=False, risk_section="- 未发现明显安全或性能风险")
+        out = fallback_digest(quality, None)
+        assert "未发现明显安全或性能风险" in out
 
-    def test_with_prd_sections(self):
-        req = """
-## 需求完成情况
-- 章节 3 Banner 已覆盖
-- 章节 5 Profile 未覆盖
-完成度:约60%
-"""
-        out = fallback_digest("- 硬编码密钥有泄露风险", req)
-        assert "需求完成情况" in out
-        assert "未覆盖（重点）" in out
-        assert "已覆盖" in out
-        assert "Banner" in out
-        assert "Profile" in out
-        # Uncovered section should appear before covered / risks.
-        assert out.index("未覆盖（重点）") < out.index("已覆盖")
-        assert out.index("需求完成情况") < out.index("潜在风险问题")
-
-    def test_prd_parse_failure_short(self):
-        req = "## 需求完成情况\n\n**PRD解析失败**\n\n原因：HTTP 403"
-        out = fallback_digest("- ok", req)
-        assert "PRD 解析失败" in out
-        assert "HTTP 403" in out
+    def test_with_prd_triple(self):
+        quality = normalize_triple_report(
+            """
+### 1. PRD 覆盖情况
+- Profile 未覆盖
+### 2. 非 PRD 范围的潜在波及
+- 旧支付回调
+### 3. 安全与性能风险
+- 硬编码密钥有泄露风险
+""",
+            has_prd=True,
+        )
+        out = fallback_digest(quality, None)
+        assert "1. PRD 覆盖" in out
+        assert "Profile" in out or "未覆盖" in out
+        assert "2. 非PRD波及" in out
+        assert "支付" in out
+        assert "泄露" in out
+        assert out.index("1. PRD 覆盖") < out.index("3. 安全与性能风险")
 
 
 class TestBuildDigest:
     def test_llm_success(self):
         with patch(
             "biz.utils.im.review_notify._llm_digest",
-            return_value="#### 潜在风险问题\n- 越权风险",
+            return_value="#### 3. 安全与性能风险\n- 越权风险",
         ):
             out = build_dingtalk_digest(
                 quality_report="long...",
@@ -132,8 +130,13 @@ class TestBuildDigest:
             "biz.utils.im.review_notify._llm_digest",
             side_effect=RuntimeError("boom"),
         ):
+            quality = normalize_triple_report(
+                "",
+                has_prd=False,
+                risk_section="- XSS 漏洞可被利用",
+            )
             out = build_dingtalk_digest(
-                quality_report="- XSS 漏洞可被利用\n总分:10分",
+                quality_report=quality,
                 requirement_report=None,
                 has_prd=False,
             )

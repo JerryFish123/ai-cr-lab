@@ -8,6 +8,7 @@ from typing import Any
 
 from biz.utils.im import notifier
 from biz.utils.log import logger
+from biz.utils.review_report_format import PRD_MISSING_MESSAGE
 from biz.utils.token_util import count_tokens, truncate_text_by_tokens
 
 _RISK_KW_RE = re.compile(
@@ -18,6 +19,9 @@ _RISK_KW_RE = re.compile(
 )
 _SCORE_LINE_RE = re.compile(r"^\s*(总分|评分明细|得分)[:：].*$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^\s*[-*•]\s+(.+)$", re.MULTILINE)
+_SECTION1_RE = re.compile(r"#{1,4}\s*1\.\s*PRD\s*覆盖", re.I)
+_SECTION2_RE = re.compile(r"#{1,4}\s*2\.\s*非\s*PRD|#{1,4}\s*2\.\s*.*波及", re.I)
+_SECTION3_RE = re.compile(r"#{1,4}\s*3\.\s*安全与性能|#{1,4}\s*安全与性能风险", re.I)
 
 
 def estimate_review_minutes(file_count: int, has_prd: bool) -> tuple[int, int]:
@@ -68,7 +72,7 @@ def format_review_finished_markdown(
     url: str,
     digest_body: str,
 ) -> str:
-    body = (digest_body or "").strip() or "未发现严重问题"
+    body = (digest_body or "").strip() or "未发现明显安全或性能风险"
     return (
         f"### 审查完成：{project_name}\n\n"
         f"- **提交者**: {author}\n"
@@ -77,65 +81,89 @@ def format_review_finished_markdown(
     )
 
 
-def fallback_digest(quality_report: str, requirement_report: str | None) -> str:
-    """Local fallback when LLM digest fails: keep risk-looking bullets only."""
+def _extract_section(text: str, start_pat: re.Pattern, next_pats: list[re.Pattern]) -> str:
+    m = start_pat.search(text or "")
+    if not m:
+        return ""
+    start = m.end()
+    end = len(text)
+    for np in next_pats:
+        nm = np.search(text, start)
+        if nm:
+            end = min(end, nm.start())
+    return text[start:end].strip()
+
+
+def _bullets(section: str, limit: int = 5) -> list[str]:
+    items = [f"- {m.group(1).strip()}" for m in _BULLET_RE.finditer(section or "")]
+    return items[:limit]
+
+
+def fallback_digest(quality_report: str, requirement_report: str | None = None) -> str:
+    """Local fallback: three-section short digest from the full triple report."""
     text = _SCORE_LINE_RE.sub("", quality_report or "")
-    risks: list[str] = []
-    for m in _BULLET_RE.finditer(text):
-        line = m.group(1).strip()
-        if _RISK_KW_RE.search(line):
-            risks.append(f"- {line}")
-    if not risks:
-        # Also scan numbered / heading-ish lines containing risk keywords.
-        for raw in text.splitlines():
-            line = raw.strip().lstrip("#").strip()
-            if not line or len(line) > 200:
-                continue
-            if _RISK_KW_RE.search(line) and "总分" not in line:
-                risks.append(f"- {line}")
-            if len(risks) >= 8:
-                break
+    has_missing = PRD_MISSING_MESSAGE in text or (requirement_report and "PRD解析失败" in requirement_report)
 
-    parts: list[str] = []
+    s1 = _extract_section(text, _SECTION1_RE, [_SECTION2_RE, _SECTION3_RE])
+    s2 = _extract_section(text, _SECTION2_RE, [_SECTION3_RE])
+    s3 = _extract_section(text, _SECTION3_RE, [])
 
-    if requirement_report is not None:
-        parts.append("#### 需求完成情况")
-        if "PRD解析失败" in requirement_report:
-            # Keep failure short.
+    parts: list[str] = ["#### 1. PRD 覆盖"]
+    if has_missing or (not s1 and PRD_MISSING_MESSAGE in text):
+        if requirement_report and "PRD解析失败" in requirement_report:
             reason = requirement_report
             for marker in ("原因：", "原因:"):
                 if marker in requirement_report:
                     reason = requirement_report.split(marker, 1)[-1].strip().splitlines()[0]
                     break
-            parts.append(f"- PRD 解析失败：{reason[:200]}")
+            parts.append(f"- PRD解析失败：{reason[:200]}")
         else:
-            done, todo = _split_requirement_lines(requirement_report)
-            parts.append("**未覆盖（重点）**")
-            parts.extend(todo or ["- 无未覆盖项"])
-            parts.append("**已覆盖**")
-            parts.extend((done or ["- （未能从报告中识别已覆盖项）"])[:3])
-        parts.append("")
-
-    parts.append("#### 潜在风险问题")
-    if risks:
-        parts.extend(risks[:8])
+            parts.append(f"- {PRD_MISSING_MESSAGE}")
     else:
-        parts.append("- 未发现严重问题")
+        uncovered = [
+            ln
+            for ln in _bullets(s1, 8)
+            if "未覆盖" in ln or "未完成" in ln or "缺失" in ln or "未实现" in ln
+        ]
+        if not uncovered:
+            # Prefer any bullets that are not "无未覆盖"
+            uncovered = [ln for ln in _bullets(s1, 5) if "无未覆盖" not in ln][:5]
+        parts.extend(uncovered or ["- 无未覆盖项"])
 
-    return "\n".join(parts)
+    parts.append("")
+    parts.append("#### 2. 非PRD波及")
+    if has_missing:
+        parts.append(f"- {PRD_MISSING_MESSAGE}")
+    else:
+        blast = [ln for ln in _bullets(s2, 5) if "未发现" not in ln]
+        parts.extend(blast or ["- 未发现"])
 
-
-def _split_requirement_lines(report: str) -> tuple[list[str], list[str]]:
-    done: list[str] = []
-    todo: list[str] = []
-    for m in _BULLET_RE.finditer(report or ""):
+    parts.append("")
+    parts.append("#### 3. 安全与性能风险")
+    risk_src = s3 or text
+    risks = []
+    for m in _BULLET_RE.finditer(risk_src):
         line = m.group(1).strip()
-        low = line.lower()
-        if any(k in line for k in ("未覆盖", "未完成", "缺失", "未实现", "部分覆盖")):
-            todo.append(f"- {line}")
-        elif any(k in line for k in ("已覆盖", "已完成", "已实现")) or "covered" in low:
-            done.append(f"- {line}")
-    return done[:10], todo[:10]
+        if "未发现" in line and "风险" in line:
+            continue
+        if _RISK_KW_RE.search(line) or s3:
+            if "未发现" in line:
+                continue
+            risks.append(f"- {line}")
+        if len(risks) >= 5:
+            break
+    if not risks and s3:
+        risks = [ln for ln in _bullets(s3, 5) if "未发现" not in ln]
+    if not risks:
+        # Legacy: scan whole text for risk keywords
+        for m in _BULLET_RE.finditer(text):
+            line = m.group(1).strip()
+            if _RISK_KW_RE.search(line):
+                risks.append(f"- {line}")
+            if len(risks) >= 5:
+                break
+    parts.extend(risks or ["- 未发现明显安全或性能风险"])
+    return "\n".join(parts)
 
 
 def build_dingtalk_digest(
@@ -191,9 +219,7 @@ def _llm_digest(
         text = re.sub(r"^```(?:markdown)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text).strip()
     if not text or "总分" in text[:80]:
-        # Guard against model ignoring instructions.
         return fallback_digest(quality_report, requirement_report if has_prd else None)
-    # Drop medium/minor leftovers if the model ignored severity rules.
     from biz.utils.review_report_format import trim_quality_report_for_publish
 
     return trim_quality_report_for_publish(text)
@@ -264,7 +290,6 @@ def notify_review_finished(
 
 def pr_meta_from_webhook(webhook_data: dict) -> dict[str, Any]:
     """Best-effort extract common PR/MR fields for notifications."""
-    # GitHub / Gitea PR
     if "pull_request" in webhook_data:
         pr = webhook_data["pull_request"]
         repo = webhook_data.get("repository") or {}
@@ -278,7 +303,6 @@ def pr_meta_from_webhook(webhook_data: dict) -> dict[str, Any]:
             "target_branch": base.get("ref") or pr.get("base_branch") or "",
             "url": pr.get("html_url") or pr.get("url") or "",
         }
-    # GitLab MR
     attrs = webhook_data.get("object_attributes") or {}
     project = webhook_data.get("project") or {}
     user = webhook_data.get("user") or {}

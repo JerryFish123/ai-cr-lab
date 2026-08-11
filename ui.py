@@ -25,6 +25,7 @@ from streamlit_cookies_manager import CookieManager
 load_dotenv("conf/.env")
 
 from biz.service.review_service import ReviewService
+from biz.utils.review_report_format import count_prd_reviews, summarize_review_for_table
 
 ReviewService.init_db()
 
@@ -417,33 +418,6 @@ def generate_project_count_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_D
     plt.close(fig1)
 
 
-# 生成项目平均分数图表
-def generate_project_score_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个项目的平均分数
-    project_scores = df.groupby('project_name')['score'].mean().reset_index()
-    project_scores.columns = ['project_name', 'average_score']
-
-    # 生成颜色列表，每个项目一个颜色
-    # colors = plt.cm.get_cmap('Accent', len(project_scores))  # 使用'tab20'颜色映射，适合分类数据
-    colors = plt.colormaps['Accent'].resampled(len(project_scores))
-    # 显示平均分数柱状图
-    fig2, ax2 = plt.subplots(figsize=figsize)
-    ax2.bar(
-        project_scores['project_name'],
-        project_scores['average_score'],
-        color=[colors(i) for i in range(len(project_scores))]
-    )
-    ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig2)
-    plt.close(fig2)
-
-
 # 生成人员提交数量图表
 def generate_author_count_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
     if df.empty:
@@ -468,32 +442,6 @@ def generate_author_count_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DE
     plt.tight_layout()
     st.pyplot(fig1)
     plt.close(fig1)
-
-
-# 生成人员平均分数图表
-def generate_author_score_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个人员的平均分数
-    author_scores = df.groupby('author')['score'].mean().reset_index()
-    author_scores.columns = ['author', 'average_score']
-
-    # 显示平均分数柱状图
-    fig2, ax2 = plt.subplots(figsize=figsize)
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['Pastel1'].resampled(len(author_scores))
-    ax2.bar(
-        author_scores['author'],
-        author_scores['average_score'],
-        color=[colors(i) for i in range(len(author_scores))]
-    )
-    ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig2)
-    plt.close(fig2)
 
 
 def generate_author_code_line_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
@@ -643,6 +591,20 @@ def main_page():
                             updated_at_lte=int(end_datetime.timestamp()), columns=columns)
             df = pd.DataFrame(data)
 
+            if "review_result" in df.columns and not df.empty:
+                df["summary"] = df["review_result"].apply(summarize_review_for_table)
+            elif not df.empty:
+                df["summary"] = "—"
+
+            display_cols = [c for c in columns if c != "review_result"]
+            if "summary" in df.columns and "summary" not in display_cols:
+                # Place summary before url when present
+                if "url" in display_cols:
+                    idx = display_cols.index("url")
+                    display_cols = display_cols[:idx] + ["summary"] + display_cols[idx:]
+                else:
+                    display_cols = display_cols + ["summary"]
+
             if df.empty:
                 st.markdown(
                     '<div class="empty-panel">'
@@ -654,47 +616,51 @@ def main_page():
                 )
             else:
                 st.data_editor(
-                    df,
+                    df[display_cols],
                     use_container_width=True,
                     column_config=column_config
                 )
 
             total_records = len(df)
-            average_score = df["score"].mean() if not df.empty else 0
-            st.markdown(f"**总记录数:** {total_records}，**平均得分:** {average_score:.2f}")
+            project_count = df["project_name"].nunique() if not df.empty else 0
+            if not df.empty and "additions" in df.columns and "deletions" in df.columns:
+                total_lines = int(df["additions"].fillna(0).sum() + df["deletions"].fillna(0).sum())
+            else:
+                total_lines = 0
+            prd_count = count_prd_reviews(df["review_result"]) if (not df.empty and "review_result" in df.columns) else 0
 
-            # 所有统计图同一行排列（画布与坐标轴字号收窄以适配宽幅多列）
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("总审查次数", total_records)
+            m2.metric("涉及项目数", project_count)
+            m3.metric("代码变更总行数", total_lines)
+            m4.metric("含 PRD 审查次数", prd_count)
+
             chart_title_css = "<div style='text-align:center;font-size:clamp(11px,0.95vw,14px);line-height:1.2;margin:0 0 0.2rem 0;'><b>{}</b></div>"
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.markdown(chart_title_css.format("项目提交统计"), unsafe_allow_html=True)
+                st.markdown(chart_title_css.format("项目审查次数"), unsafe_allow_html=True)
                 generate_project_count_chart(df)
             with c2:
-                st.markdown(chart_title_css.format("项目平均得分"), unsafe_allow_html=True)
-                generate_project_score_chart(df)
-            with c3:
-                st.markdown(chart_title_css.format("开发者提交统计"), unsafe_allow_html=True)
+                st.markdown(chart_title_css.format("开发者审查次数"), unsafe_allow_html=True)
                 generate_author_count_chart(df)
-            with c4:
-                st.markdown(chart_title_css.format("开发者平均得分"), unsafe_allow_html=True)
-                generate_author_score_chart(df)
-            with c5:
-                st.markdown(chart_title_css.format("人员代码变更行数"), unsafe_allow_html=True)
-                if 'additions' in df.columns and 'deletions' in df.columns:
-                    generate_author_code_line_chart(df)
-                else:
-                    st.info("无法显示代码行数图表：缺少必要的数据列")
-            with c6:
-                st.markdown(chart_title_css.format("项目代码变更行数"), unsafe_allow_html=True)
+            with c3:
+                st.markdown(chart_title_css.format("项目变更行数"), unsafe_allow_html=True)
                 if 'additions' in df.columns and 'deletions' in df.columns:
                     generate_project_code_line_chart(df)
                 else:
                     st.info("无法显示代码行数图表：缺少必要的数据列")
+            with c4:
+                st.markdown(chart_title_css.format("开发者变更行数"), unsafe_allow_html=True)
+                if 'additions' in df.columns and 'deletions' in df.columns:
+                    generate_author_code_line_chart(df)
+                else:
+                    st.info("无法显示代码行数图表：缺少必要的数据列")
 
     # Merge Request 数据展示
-    mr_columns = ["project_name", "author", "source_branch", "target_branch", "updated_at", "commit_messages", "delta",
-                  "score",
-                  "url", 'additions', 'deletions']
+    mr_columns = [
+        "project_name", "author", "source_branch", "target_branch", "updated_at",
+        "delta", "url", "review_result", "additions", "deletions",
+    ]
 
     mr_column_config = {
         "project_name": "项目名称",
@@ -702,45 +668,37 @@ def main_page():
         "source_branch": "源分支",
         "target_branch": "目标分支",
         "updated_at": "更新时间",
-        "commit_messages": "提交信息",
-        "delta": "代码变更",
-        "score": st.column_config.ProgressColumn(
-            "得分",
-            format="%f",
-            min_value=0,
-            max_value=100,
-        ),
+        "delta": "变更行数",
+        "summary": "审查摘要",
         "url": st.column_config.LinkColumn(
-            "操作",
+            "PR 链接",
             max_chars=100,
-            display_text="查看详情"
+            display_text="打开"
         ),
         "additions": None,
         "deletions": None,
+        "review_result": None,
     }
 
     display_data(mr_tab, ReviewService().get_mr_review_logs, mr_columns, mr_column_config)
 
     # Push 数据展示
     if show_push_tab:
-        push_columns = ["project_name", "author", "branch", "updated_at", "commit_messages", "delta", "score",
-                        'additions', 'deletions']
+        push_columns = [
+            "project_name", "author", "branch", "updated_at",
+            "delta", "review_result", "additions", "deletions",
+        ]
 
         push_column_config = {
             "project_name": "项目名称",
             "author": "开发者",
             "branch": "分支",
             "updated_at": "更新时间",
-            "commit_messages": "提交信息",
-            "delta": "代码变更",
-            "score": st.column_config.ProgressColumn(
-                "得分",
-                format="%f",
-                min_value=0,
-                max_value=100,
-            ),
+            "delta": "变更行数",
+            "summary": "审查摘要",
             "additions": None,
             "deletions": None,
+            "review_result": None,
         }
 
         display_data(push_tab, ReviewService().get_push_review_logs, push_columns, push_column_config)

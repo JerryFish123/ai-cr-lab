@@ -32,7 +32,12 @@ class TestAgenticReviewer:
         # Mock the LLM client to return a fixed review.
         mock_client = MagicMock()
         mock_client.chat_with_tools.return_value = {
-            "content": "Looks good. 总分:90分",
+            "content": (
+                "## AI 代码审查\n"
+                "### 1. PRD 覆盖情况\n- 无未覆盖项\n"
+                "### 2. 非 PRD 范围的潜在波及\n- 未发现\n"
+                "### 3. 安全与性能风险\n- 未发现明显安全或性能风险"
+            ),
             "tool_calls": [],
             "raw": None,
         }
@@ -48,10 +53,10 @@ class TestAgenticReviewer:
             max_iterations=5,
         )
         result = reviewer.review(diffs_text="diff content", commits_text="msg")
-        assert "Looks good" in result
+        assert "安全与性能风险" in result
 
-    def test_review_fails_when_output_missing_score_marker(self, tmp_path, monkeypatch):
-        """Missing `总分` marker must abort + notify, not post agent monologue."""
+    def test_review_fails_when_output_missing_structure(self, tmp_path, monkeypatch):
+        """Missing review structure must abort + notify, not post agent monologue."""
         monkeypatch.setenv("LLM_PROVIDER", "ollama")
         remote = _fake_remote(tmp_path)
         cache = tmp_path / "cache"
@@ -77,7 +82,7 @@ class TestAgenticReviewer:
             max_iterations=3,
         )
         with patch("biz.agent.agentic_reviewer.notifier.send_notification") as mock_notify:
-            with pytest.raises(AgenticReviewError, match="总分"):
+            with pytest.raises(AgenticReviewError, match="未通过审查结构校验"):
                 reviewer.review(diffs_text="d", commits_text="c")
         mock_notify.assert_called_once()
 

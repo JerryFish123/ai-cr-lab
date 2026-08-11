@@ -44,7 +44,12 @@ class TestEndToEndAgentic:
 
         mock_client = MagicMock()
         mock_client.chat_with_tools.return_value = {
-            "content": "Review complete. 总分:85分",
+            "content": (
+                "## AI 代码审查\n"
+                "### 1. PRD 覆盖情况\n- 无未覆盖项\n"
+                "### 2. 非 PRD 范围的潜在波及\n- 未发现\n"
+                "### 3. 安全与性能风险\n- 未发现明显安全或性能风险"
+            ),
             "tool_calls": [],
             "raw": None,
         }
@@ -61,7 +66,7 @@ class TestEndToEndAgentic:
 
         result = reviewer.review(diffs_text="+ new line", commits_text="add line")
 
-        assert "85" in result
+        assert "安全与性能风险" in result
         assert (cache / "int_proj").exists()
         assert mock_client.chat_with_tools.called
 

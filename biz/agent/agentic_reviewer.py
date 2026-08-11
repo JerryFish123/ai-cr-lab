@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,14 +15,8 @@ from biz.agent.runner import AgentRunner
 from biz.agent.tools import register_default_tools
 from biz.agent.tool_registry import ToolRegistry
 from biz.llm.factory import Factory
-from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.log import logger
 from biz.utils.im import notifier
-
-
-# Same regex CodeReviewer.parse_review_score uses; reused as a sanity gate
-# so we don't post the agent's tool-selection reasoning as a "review".
-_REVIEW_SCORE_RE = re.compile(r"总分[:：]\s*(\d+)分?")
 
 
 class AgenticReviewError(RuntimeError):
@@ -64,10 +57,15 @@ def _parse_csv_env(name: str, default: list[str]) -> list[str]:
 
 
 def _looks_like_review(text: str | None) -> bool:
-    """Heuristic: a well-formed agentic review must include the `总分:XX分` marker."""
+    """Heuristic: well-formed review has triple sections or an explicit risk section."""
     if not text:
         return False
-    return bool(_REVIEW_SCORE_RE.search(text))
+    from biz.utils.review_report_format import looks_like_triple_report
+
+    if looks_like_triple_report(text):
+        return True
+    # risk-only outputs
+    return "安全" in text or "性能" in text or "风险" in text
 
 
 @dataclass
@@ -145,7 +143,15 @@ class AgenticReviewer:
         register_default_tools(registry, repo_root, allowlist=allow, blocklist=block)
         return registry
 
-    def review(self, diffs_text: str, commits_text: str) -> str:
+    def review(
+        self,
+        diffs_text: str,
+        commits_text: str,
+        *,
+        prompt_key: str = "triple_review_prompt",
+        extra_format: dict | None = None,
+        validate=None,
+    ) -> str:
         start = time.monotonic()
         # 1. Sync repo locally.
         try:
@@ -169,12 +175,18 @@ class AgenticReviewer:
         )
 
         # 3. Build initial messages from prompt template.
-        prompts = load_prompt("agentic_code_review_prompt", style=os.getenv("REVIEW_STYLE", "professional"))
-        user_content = prompts["user_message"]["content"].format(
-            diffs_text=diffs_text,
-            commits_text=commits_text,
-            repo_root=str(repo_root),
-        )
+        prompts = load_prompt(prompt_key, style=os.getenv("REVIEW_STYLE", "professional"))
+        fmt = {
+            "diffs_text": diffs_text,
+            "commits_text": commits_text,
+            "repo_root": str(repo_root),
+            "description": "",
+            "chapter_hints": "",
+            "prd_text": "",
+        }
+        if extra_format:
+            fmt.update(extra_format)
+        user_content = prompts["user_message"]["content"].format(**fmt)
         messages = [prompts["system_message"], {"role": "user", "content": user_content}]
 
         # 4. Run the agent loop — failures notify DingTalk and abort (no diff_only).
@@ -188,11 +200,11 @@ class AgenticReviewer:
                 ref=self.ref,
             )
 
-        # 4b. Defense-in-depth: missing `总分:XX分` means leaked reasoning, not a review.
-        if not _looks_like_review(result):
+        check = validate or _looks_like_review
+        if not check(result):
             preview = (result or "")[:240].replace("\n", " ")
             _fail_agentic(
-                f"输出缺少「总分」标记，疑似非审查结果（len={len(result or '')}）: {preview}",
+                f"输出未通过审查结构校验，疑似非审查结果（len={len(result or '')}）: {preview}",
                 project=self.repo_key,
                 ref=self.ref,
             )
@@ -203,12 +215,12 @@ class AgenticReviewer:
             event="agentic_review",
             project=self.repo_key,
             ref=self.ref,
-            strategy="agentic",
+            strategy=prompt_key,
             iterations=run_meta.get("iterations", 0),
             total_tokens_est=_estimate_tokens(run_messages),
             duration_ms=int((time.monotonic() - start) * 1000),
             review_result_length=len(result),
-            score=CodeReviewer.parse_review_score(review_text=result),
+            score=0,
             degraded=False,
             tool_calls=_collect_tool_calls(run_messages),
         )

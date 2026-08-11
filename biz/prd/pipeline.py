@@ -1,4 +1,8 @@
-"""Orchestrate conditional「需求完成情况」comment after code-quality review."""
+"""Legacy PRD-only note pipeline.
+
+Prefer `biz.review.triple_review.run_triple_review` (single three-section comment).
+Kept for tests / gradual deprecation; worker no longer posts a second note via this module.
+"""
 from __future__ import annotations
 
 import os
