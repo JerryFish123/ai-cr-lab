@@ -639,7 +639,7 @@ def main_page():
 
             if df.empty:
                 empty_hint = (
-                    "当前为演示模式，请扩大统计时间段或放宽筛选条件。"
+                    "请扩大统计时间段或放宽筛选条件。"
                     if use_mock
                     else "调整时间段或筛选条件，或确认 Webhook 已指向 <code>/review/webhook</code>。"
                 )
