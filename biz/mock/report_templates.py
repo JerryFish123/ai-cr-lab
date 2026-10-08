@@ -47,7 +47,10 @@ def _pick_paths(rng: random.Random, stack: str, project: str, topic: str, n: int
         ],
     }
     pool = pools.get(stack, pools["java"])
-    return rng.sample(pool, k=min(n, len(pool)))
+    picked = rng.sample(pool, k=min(n, len(pool)))
+    while len(picked) < max(n, 5):
+        picked.append(rng.choice(pool))
+    return picked
 
 
 def _bullets(lines: list[str]) -> str:
