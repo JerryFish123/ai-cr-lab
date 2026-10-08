@@ -6,7 +6,7 @@ import random
 
 import pandas as pd
 
-from biz.utils.review_report_format import normalize_triple_report
+from biz.mock.report_templates import build_review_report
 
 # Project inception for ai-cr-lab ops (~first ECS deploy era)
 _MOCK_START = datetime.datetime(2025, 8, 1, 9, 0, 0)
@@ -83,72 +83,6 @@ def _pick_weighted(rng: random.Random, items: list[dict]) -> dict:
     return rng.choices(items, weights=weights, k=1)[0]
 
 
-def _legacy_report(rng: random.Random, stack: str) -> str:
-    issues = [
-        "未关闭的 JDBC 连接可能导致连接池耗尽",
-        "前端 bundle 体积超 500KB，建议 lazy-load",
-        "缺少对 /api/v2 的集成测试",
-        "日志中打印了 partial token",
-    ]
-    score = rng.randint(62, 92)
-    picked = rng.sample(issues, k=rng.randint(1, 3))
-    body = "\n".join(f"- {x}" for x in picked)
-    return f"### 严重问题\n{body}\n\n### 中等问题\n- 建议补充 README 变更说明\n\n总分:{score}分"
-
-
-def _with_prd_report(rng: random.Random, stack: str, topic: str) -> str:
-    uncovered = rng.choice(
-        [
-            f"- PRD 3.{rng.randint(1,4)} {topic} 未覆盖（缺少 {rng.choice(_MARKETS)} 文案校验）",
-            "- 部分覆盖：导出 Excel 列宽与 PRD 不一致",
-            "- 已覆盖：列表筛选与 PRD 一致\n- 未覆盖：批量操作二次确认弹窗",
-        ]
-    )
-    blast = rng.choice(
-        [
-            "- 波及旧版结算回调，需回归 payment notify",
-            "- 未发现",
-            "- 波及权限中心 role cache 刷新逻辑",
-            "- 可能影响 datenpipeline-etl-py 下游字段映射",
-        ]
-    )
-    risk = rng.choice(
-        [
-            "- SQL 拼接存在注入风险，请改用 PreparedStatement / 参数化",
-            "- 未发现明显安全或性能风险",
-            "- 接口无限流，存在被刷风险",
-            "- 硬编码 API Key，建议迁移至密钥管理",
-            "- N+1 查询，分页接口 P99 可能劣化",
-        ]
-    )
-    raw = f"""### 1. PRD 覆盖情况
-{uncovered}
-### 2. 非 PRD 范围的潜在波及
-{blast}
-### 3. 安全与性能风险
-{risk}"""
-    return normalize_triple_report(raw, has_prd=True)
-
-
-def _no_prd_report(rng: random.Random, stack: str) -> str:
-    risk = rng.choice(
-        [
-            "- 未发现明显安全或性能风险",
-            "- 缺少输入长度校验，可能导致 DoS",
-            "- 敏感字段未脱敏写入日志",
-        ]
-    )
-    return normalize_triple_report("", has_prd=False, risk_section=risk)
-
-
-def _review_for_kind(rng: random.Random, kind: str, stack: str, topic: str) -> str:
-    if kind == "legacy":
-        return _legacy_report(rng, stack)
-    if kind == "with_prd":
-        return _with_prd_report(rng, stack, topic)
-    return _no_prd_report(rng, stack)
-
-
 def _kind_roll(rng: random.Random) -> str:
     return rng.choices(["with_prd", "no_prd", "legacy"], weights=[42, 38, 20], k=1)[0]
 
@@ -191,7 +125,9 @@ def _build_mr_rows(rng: random.Random, n: int) -> list[dict]:
                 "commit_messages": msg,
                 "score": rng.randint(0, 100) if kind == "legacy" else None,
                 "url": f"https://github.com/{org}/{name}/pull/{pr_num}",
-                "review_result": _review_for_kind(rng, kind, stack, topic),
+                "review_result": build_review_report(
+                    rng, kind, stack=stack, topic=topic, project_name=name, market=market
+                ),
                 "additions": adds,
                 "deletions": dels,
             }
@@ -208,10 +144,11 @@ def _build_push_rows(rng: random.Random, n: int) -> list[dict]:
         stack = proj["stack"]
         author = rng.choice(AUTHORS)
         topic = rng.choice(_TOPICS)
+        market = rng.choice(_MARKETS)
         branch = rng.choice(_PUSH_BRANCHES)
         kind = _kind_roll(rng)
         adds, dels = _lines_for_stack(rng, stack)
-        msg = f"push: {rng.choice(_COMMIT_MSGS).format(topic=topic, market=rng.choice(_MARKETS), scope='push')}"
+        msg = f"push: {rng.choice(_COMMIT_MSGS).format(topic=topic, market=market, scope='push')}"
         rows.append(
             {
                 "project_name": name,
@@ -220,7 +157,9 @@ def _build_push_rows(rng: random.Random, n: int) -> list[dict]:
                 "updated_at": _rand_ts(rng, _MOCK_START, _MOCK_END),
                 "commit_messages": msg,
                 "score": rng.randint(0, 100) if kind == "legacy" else None,
-                "review_result": _review_for_kind(rng, kind, stack, topic),
+                "review_result": build_review_report(
+                    rng, kind, stack=stack, topic=topic, project_name=name, market=market
+                ),
                 "additions": adds,
                 "deletions": dels,
             }

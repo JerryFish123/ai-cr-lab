@@ -441,6 +441,37 @@ st.markdown(
         border: 1px solid {BORDER} !important; border-radius: 12px !important;
     }}
     div[data-testid="stExpander"] summary {{ color: #334155 !important; font-weight: 600; }}
+    div[data-testid="stExpander"] [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: {BG_SURFACE_ALT} !important; border-color: {BORDER} !important;
+        padding: 0.75rem 0.9rem !important;
+    }}
+    .report-meta {{
+        display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.65rem;
+    }}
+    .report-meta .chip {{
+        display: inline-block; padding: 0.22rem 0.55rem; border-radius: 999px;
+        background: #d6e8e4; color: #0f5132; font-size: 0.76rem; font-weight: 600;
+        border: 1px solid #a7d9cc;
+    }}
+    .report-meta .chip-muted {{
+        background: #dde4ec; color: #475569; border-color: {BORDER};
+    }}
+    .element-container:has(.report-body-marker) + .element-container [data-testid="stMarkdownContainer"] {{
+        background: {BG_INPUT}; border: 1px solid {BORDER}; border-radius: 10px;
+        padding: 0.85rem 1rem; line-height: 1.65; font-size: 0.88rem;
+    }}
+    .element-container:has(.report-body-marker) + .element-container [data-testid="stMarkdownContainer"] h2 {{
+        font-size: 1.05rem; margin: 0 0 0.65rem; color: #0f766e;
+    }}
+    .element-container:has(.report-body-marker) + .element-container [data-testid="stMarkdownContainer"] h3 {{
+        font-size: 0.95rem; margin: 1rem 0 0.45rem; color: #134e4a;
+    }}
+    .element-container:has(.report-body-marker) + .element-container [data-testid="stMarkdownContainer"] li {{
+        margin-bottom: 0.35rem;
+    }}
+    .report-link {{ margin-top: 0.55rem; }}
+    .report-link a {{ color: #0f766e; font-weight: 600; text-decoration: none; }}
+    .report-link a:hover {{ text-decoration: underline; }}
 
     /* ── Tabs ── */
     [data-testid="stTabs"] {{
@@ -520,6 +551,34 @@ def _row_label(row) -> str:
 def _mock_mode_active() -> bool:
     """?query=1 → auto demo data; no extra click, no MySQL reads for dashboard."""
     return is_mock_query_unlocked(st.query_params)
+
+
+def _render_report_detail(df: pd.DataFrame, *, has_url: bool, tab_key: str):
+    labels = [_row_label(row) for _, row in df.iterrows()]
+    with st.expander("查看完整审查报告", expanded=False):
+        selected = st.selectbox("选择记录", labels, key=f"{tab_key}_detail_pick", label_visibility="collapsed")
+        row = df.iloc[labels.index(selected)]
+        report = str(row.get("review_result") or "").strip() or "_（无审查正文）_"
+        kind_label = str(row.get("kind_label") or "—")
+        delta = str(row.get("delta") or "—")
+        branch = str(row.get("source_branch") or row.get("branch") or "—")
+        st.markdown(
+            f'<div class="report-meta">'
+            f'<span class="chip">{row.get("project_name") or "—"}</span>'
+            f'<span class="chip chip-muted">{row.get("author") or "—"}</span>'
+            f'<span class="chip chip-muted">{kind_label}</span>'
+            f'<span class="chip chip-muted">{delta}</span>'
+            f'<span class="chip chip-muted">{branch}</span>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown('<span class="report-body-marker"></span>', unsafe_allow_html=True)
+        st.markdown(report)
+        if has_url and row.get("url"):
+            st.markdown(
+                f'<div class="report-link"><a href="{row.get("url")}" target="_blank">打开 PR/MR ↗</a></div>',
+                unsafe_allow_html=True,
+            )
 
 
 def _resolve_log_fetcher(use_mock: bool, *, kind: str):
@@ -683,14 +742,7 @@ def main_page():
             ]
             st.dataframe(df[display_cols], use_container_width=True, hide_index=True, column_config=column_config)
 
-            labels = [_row_label(row) for _, row in df.iterrows()]
-            with st.expander("查看完整审查报告", expanded=False):
-                selected = st.selectbox("选择记录", labels, key=f"{tab}_detail_pick", label_visibility="collapsed")
-                row = df.iloc[labels.index(selected)]
-                report = str(row.get("review_result") or "").strip() or "_（无审查正文）_"
-                st.markdown(report)
-                if has_url and row.get("url"):
-                    st.markdown(f"[打开 PR/MR]({row.get('url')})")
+            _render_report_detail(df, has_url=has_url, tab_key=str(tab))
 
     mr_columns = [
         "project_name", "author", "source_branch", "target_branch", "updated_at",
