@@ -120,9 +120,10 @@ def build_with_prd_report(
     ]
     risks = rng.sample(risk_pool, k=rng.randint(2, 5))
 
+    # Headings must align with review_report_format section regexes (avoid orphan「情况」等字)
     raw = (
-        f"### 1. PRD 覆盖情况\n\n{s1}\n\n"
-        f"### 2. 非 PRD 范围的潜在波及\n\n{_bullets(blast)}\n\n"
+        f"### 1. PRD 覆盖\n\n{s1}\n\n"
+        f"### 2. 非 PRD 波及\n\n{_bullets(blast)}\n\n"
         f"### 3. 安全与性能风险\n\n{_bullets(risks)}"
     )
     return normalize_triple_report(raw, has_prd=True)
