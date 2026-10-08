@@ -29,15 +29,15 @@ PROJECTS: list[dict] = [
 
 AUTHORS = [
     "JerryFish123",
-    "yuki.tanaka",
-    "maria.garcia",
     "chen.wei",
-    "priya.sharma",
+    "wang.lei",
+    "zhang.yimin",
+    "liu.hao",
+    "zhao.xin",
+    "sun.qiang",
+    "maria.garcia",
     "lucas.mueller",
-    "alex.kim",
-    "fatima.alhassan",
-    "jean.dubois",
-    "minseo.park",
+    "priya.sharma",
 ]
 
 _MR_BRANCHES = [
