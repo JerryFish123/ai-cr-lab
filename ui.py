@@ -423,15 +423,6 @@ st.markdown(
     }}
     div[data-testid="stExpander"] summary {{ color: #854d0e !important; font-weight: 600; }}
 
-    /* ── Mock demo banner ── */
-    .mock-demo-bar {{
-        background: linear-gradient(90deg, #7c3aed, #a855f7);
-        color: #faf5ff; border-radius: 12px; padding: 0.65rem 1rem;
-        margin: 0.5rem 0 0.75rem; font-size: 0.88rem;
-        box-shadow: 0 2px 12px rgba(124, 58, 237, 0.25);
-    }}
-    .mock-demo-bar strong {{ color: #fff; }}
-
     /* ── Tabs ── */
     [data-testid="stTabs"] {{
         background: linear-gradient(180deg, #f0fdfa, #ccfbf1);
@@ -513,17 +504,6 @@ def _mock_mode_active() -> bool:
     return is_mock_query_unlocked(st.query_params)
 
 
-def _render_mock_banner():
-    if not _mock_mode_active():
-        return
-    st.markdown(
-        f'<div class="mock-demo-bar">'
-        f"<strong>演示模式</strong> · {DashboardMockProvider.describe()} · 与生产 MySQL 数据完全隔离"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
 def _resolve_log_fetcher(use_mock: bool, *, kind: str):
     if use_mock:
         return (
@@ -585,7 +565,6 @@ def main_page():
                 unsafe_allow_html=True,
             )
 
-    _render_mock_banner()
     use_mock = _mock_mode_active()
 
     current_date = datetime.date.today()
