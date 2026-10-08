@@ -405,6 +405,7 @@ def build_no_prd_report(rng: random.Random, *, stack: str, topic: str, project_n
 
 def build_legacy_report(rng: random.Random, *, stack: str, topic: str, project_name: str) -> str:
     paths = _pick_paths(rng, stack, project_name, topic, 6)
+    market = rng.choice(_MARKETS)
     severe = [
         f"{_line(paths[0], rng.randint(40, 120))} 未关闭 Connection/Stream，连接池可能耗尽",
         f"{_line(paths[1], rng.randint(50, 180))} NPE：`list.get(0)` 未判空",
@@ -438,7 +439,6 @@ def build_legacy_report(rng: random.Random, *, stack: str, topic: str, project_n
         f"通知下游 `{rng.choice(_OTHER_PROJECTS)}` 消费方做联调 smoke",
     ]
     score = rng.randint(58, 86)
-    market = rng.choice(_MARKETS)
     summary = _sub_bullets(
         "变更概览",
         [
