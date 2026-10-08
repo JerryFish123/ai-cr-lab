@@ -30,15 +30,23 @@ ReviewService.init_db()
 # --- Brand palette ---
 C_PRIMARY = "#0f766e"
 C_PRIMARY_LIGHT = "#14b8a6"
-C_ACCENT = "#3dd6c6"
 C_INK = "#0c1222"
 C_MUTED = "#64748b"
 C_BORDER = "#d7e0ea"
 C_ADD = "#34d399"
 C_DEL = "#f87171"
-C_CARD = "#ffffff"
 
-_DEFAULT_CHART_FIGSIZE = (6.2, 3.8)
+# Zone tints (functional area backgrounds — not pure white)
+Z_FILTER_BG = ("#ecfdf5", "#f0fdfa")
+Z_METRIC_BGS = [
+    ("#ecfdf5", "#d1fae5"),  # teal — 总审查
+    ("#eff6ff", "#dbeafe"),  # blue — 项目数
+    ("#fff7ed", "#ffedd5"),  # amber — 行数
+    ("#f5f3ff", "#ede9fe"),  # violet — PRD
+]
+Z_CHART_BG = ("#f0f9ff", "#e0f2fe")
+Z_TABLE_BG = "#fffbeb"
+Z_DETAIL_BG = ("#fefce8", "#fef9c3")
 
 
 def set_global_font():
@@ -159,7 +167,6 @@ def get_data(service_func, authors=None, project_names=None, updated_at_gte=None
 
 
 def _parse_date_range(range_val, default_start, default_end):
-    """Normalize st.date_input range (tuple or single date)."""
     if isinstance(range_val, (list, tuple)) and len(range_val) == 2:
         start_date, end_date = range_val[0], range_val[1]
     elif isinstance(range_val, datetime.date):
@@ -171,8 +178,15 @@ def _parse_date_range(range_val, default_start, default_end):
     return start_date, end_date
 
 
+def _chart_figsize(n_rows: int) -> tuple[float, float]:
+    """Height scales with bar count so charts stay compact and readable."""
+    n = max(int(n_rows), 1)
+    height = max(2.0, min(0.38 * n + 0.9, 6.5))
+    return (6.8, height)
+
+
 def _style_chart_axes(ax, *, horizontal=False):
-    ax.set_facecolor("#fafbfc")
+    ax.set_facecolor("#f0f9ff")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(C_BORDER)
@@ -183,12 +197,14 @@ def _style_chart_axes(ax, *, horizontal=False):
 
 
 def _annotate_hbars(ax, bars, fmt="{:.0f}"):
+    xmax = ax.get_xlim()[1] or 1
+    pad = max(xmax * 0.03, 0.15)
     for bar in bars:
         w = bar.get_width()
         if w == 0:
             continue
         ax.text(
-            w + max(abs(w) * 0.02, 0.08),
+            w + pad,
             bar.get_y() + bar.get_height() / 2,
             fmt.format(w),
             va="center",
@@ -199,33 +215,39 @@ def _annotate_hbars(ax, bars, fmt="{:.0f}"):
         )
 
 
-def _chart_card(title: str, subtitle: str = ""):
-    sub = f'<div class="chart-sub">{subtitle}</div>' if subtitle else ""
+def _zone_band(label: str, zone: str, hint: str = ""):
+    hint_html = f'<span class="zone-hint">{hint}</span>' if hint else ""
     st.markdown(
-        f'<div class="chart-card"><div class="chart-head"><div class="chart-title">{title}</div>{sub}</div>',
+        f'<div class="zone-band zone-{zone}">'
+        f'<span class="zone-label">{label}</span>{hint_html}</div>',
         unsafe_allow_html=True,
     )
 
 
-def _chart_card_end():
-    st.markdown("</div>", unsafe_allow_html=True)
+def _render_chart_panel(title: str, subtitle: str, render_fn):
+    """Native Streamlit bordered container — charts must live inside, not in raw HTML."""
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        if subtitle:
+            st.caption(subtitle)
+        render_fn()
 
 
-def generate_count_chart(df, group_col: str, title_hint: str, *, color: str = C_PRIMARY):
+def generate_count_chart(df, group_col: str, *, color: str = C_PRIMARY):
     if df.empty:
-        st.info("没有数据可供展示")
+        st.info("暂无数据")
         return
     counts = df[group_col].value_counts().reset_index()
     counts.columns = [group_col, "count"]
     counts = counts.sort_values("count", ascending=True).tail(12)
 
-    fig, ax = plt.subplots(figsize=_DEFAULT_CHART_FIGSIZE)
+    fig, ax = plt.subplots(figsize=_chart_figsize(len(counts)))
     y_pos = range(len(counts))
     bars = ax.barh(
         y_pos,
         counts["count"],
         color=color,
-        height=0.62,
+        height=0.65,
         edgecolor="white",
         linewidth=0.6,
     )
@@ -234,18 +256,18 @@ def generate_count_chart(df, group_col: str, title_hint: str, *, color: str = C_
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     _style_chart_axes(ax, horizontal=True)
     _annotate_hbars(ax, bars)
-    ax.set_xlabel("审查次数", fontsize=9, color=C_MUTED, labelpad=8)
-    plt.tight_layout()
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    ax.set_xlabel("审查次数", fontsize=9, color=C_MUTED, labelpad=6)
+    ax.margins(x=0.12)
+    plt.tight_layout(pad=0.6)
+    st.pyplot(fig, use_container_width=True, clear_figure=True)
 
 
 def generate_delta_chart(df, group_col: str):
     if df.empty:
-        st.info("没有数据可供展示")
+        st.info("暂无数据")
         return
     if "additions" not in df.columns or "deletions" not in df.columns:
-        st.warning("无法生成代码行数图表：缺少必要的数据列")
+        st.warning("缺少 additions / deletions 列，无法绘制行数图")
         return
 
     add = df.groupby(group_col)["additions"].sum().reset_index()
@@ -256,105 +278,180 @@ def generate_delta_chart(df, group_col: str):
     merged["total"] = merged["additions"] + merged["deletions"]
     merged = merged.sort_values("total", ascending=True).tail(12)
 
-    fig, ax = plt.subplots(figsize=_DEFAULT_CHART_FIGSIZE)
+    fig, ax = plt.subplots(figsize=_chart_figsize(len(merged)))
     y = range(len(merged))
-    h = 0.36
+    h = 0.34
     ax.barh([i - h / 2 for i in y], merged["additions"], height=h, color=C_ADD, label="新增", edgecolor="white")
     ax.barh([i + h / 2 for i in y], merged["deletions"], height=h, color=C_DEL, label="删除", edgecolor="white")
     ax.set_yticks(list(y))
     ax.set_yticklabels(merged[group_col], fontsize=9)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     _style_chart_axes(ax, horizontal=True)
-    ax.set_xlabel("行数", fontsize=9, color=C_MUTED, labelpad=8)
+    ax.set_xlabel("行数", fontsize=9, color=C_MUTED, labelpad=6)
     ax.legend(loc="lower right", frameon=False, fontsize=8)
-    plt.tight_layout()
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    ax.margins(x=0.12)
+    plt.tight_layout(pad=0.6)
+    st.pyplot(fig, use_container_width=True, clear_figure=True)
 
 
 # --- Global CSS ---
 st.markdown(
-    """
+    f"""
     <style>
-    #MainMenu {visibility: hidden;}
-    header[data-testid="stHeader"] {display: none !important;}
-    footer {visibility: hidden;}
-    div.block-container {padding-top: 0.5rem !important; padding-bottom: 1rem !important; max-width: 1280px;}
+    #MainMenu {{visibility: hidden;}}
+    header[data-testid="stHeader"] {{display: none !important;}}
+    footer {{visibility: hidden;}}
+    div.block-container {{
+        padding-top: 0.75rem !important;
+        padding-bottom: 1.5rem !important;
+        max-width: 1200px;
+    }}
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: "Outfit", "Source Han Sans CN", sans-serif; }
-    .main {
+    html, body, [class*="css"] {{ font-family: "Outfit", "Source Han Sans CN", sans-serif; }}
+    .main {{
         background:
-          radial-gradient(1000px 480px at 100% -10%, rgba(61, 214, 198, 0.12), transparent 50%),
-          radial-gradient(800px 400px at 0% 0%, rgba(15, 118, 110, 0.08), transparent 45%),
-          linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
-    }
-    .stButton>button {
+          radial-gradient(900px 420px at 100% -8%, rgba(20, 184, 166, 0.14), transparent 55%),
+          radial-gradient(700px 380px at 0% 20%, rgba(59, 130, 246, 0.08), transparent 50%),
+          linear-gradient(180deg, #eef2f7 0%, #e2e8f0 100%);
+    }}
+    .stButton>button {{
         background: linear-gradient(135deg, #0f766e, #0d9488);
         color: white; border: none; border-radius: 10px; font-weight: 600;
-    }
-    .stButton>button:hover { box-shadow: 0 4px 14px rgba(15, 118, 110, 0.28); }
-    div[data-testid="stMetric"] {
-        background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
-        padding: 0.65rem 0.85rem; box-shadow: 0 1px 3px rgba(15,23,42,0.04);
-    }
-    div[data-testid="stMetric"] label { color: #64748b !important; font-size: 0.82rem !important; }
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #0c1222 !important; font-weight: 700 !important; }
-    .filter-panel {
-        background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
-        padding: 1rem 1.15rem 0.35rem; margin: 0.75rem 0 1rem;
-        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
-    }
-    .filter-panel-title {
-        font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em;
-        text-transform: uppercase; color: #0f766e; margin-bottom: 0.65rem;
-    }
-    .section-title {
-        font-size: 1.05rem; font-weight: 700; color: #0c1222;
-        margin: 1.25rem 0 0.65rem; padding-left: 0.65rem;
-        border-left: 3px solid #14b8a6;
-    }
-    .chart-card {
-        background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
-        padding: 0.85rem 0.9rem 0.25rem; margin-bottom: 0.75rem;
-        box-shadow: 0 2px 12px rgba(15, 23, 42, 0.035);
-        min-height: 420px;
-    }
-    .chart-head { margin-bottom: 0.35rem; padding-bottom: 0.5rem; border-bottom: 1px solid #f1f5f9; }
-    .chart-title { font-size: 0.95rem; font-weight: 700; color: #0c1222; }
-    .chart-sub { font-size: 0.78rem; color: #64748b; margin-top: 0.15rem; }
-    .detail-panel {
-        margin: 0.75rem 0 1rem; padding: 1rem 1.15rem;
-        border: 1px solid #e2e8f0; border-radius: 14px; background: #fff;
-    }
-    .empty-panel {
-        margin: 1rem 0; padding: 2rem 1.25rem; border: 1px dashed #cbd5e1;
-        border-radius: 14px; background: rgba(255,255,255,0.85); text-align: center;
-    }
-    .empty-panel h3 { margin: 0 0 0.4rem; color: #0c1222; font-size: 1.1rem; }
-    .empty-panel p { margin: 0; color: #64748b; font-size: 0.92rem; }
-    .dash-header {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 0.35rem 0 0.5rem; margin-bottom: 0.25rem;
-    }
-    .dash-brand .name { font-size: 1.45rem; font-weight: 700; color: #0c1222; letter-spacing: -0.02em; }
-    .dash-brand .tag { font-size: 0.82rem; color: #64748b; margin-top: 0.1rem; }
-    a.pro-link {
+    }}
+    .stButton>button:hover {{ box-shadow: 0 4px 14px rgba(15, 118, 110, 0.25); }}
+
+    /* ── Top header bar ── */
+    .dash-header-bar {{
+        background: linear-gradient(135deg, #0f766e 0%, #134e4a 55%, #115e59 100%);
+        border-radius: 14px; padding: 0.85rem 1.15rem; margin-bottom: 0.65rem;
+        box-shadow: 0 4px 18px rgba(15, 118, 110, 0.22);
+    }}
+    .dash-header-bar .name {{ font-size: 1.35rem; font-weight: 700; color: #f0fdfa; letter-spacing: -0.02em; }}
+    .dash-header-bar .tag {{ font-size: 0.8rem; color: #99f6e4; margin-top: 0.1rem; }}
+    a.pro-link {{
         display: inline-flex; align-items: center; justify-content: center;
-        padding: 0.45rem 1rem; background: #0c1222; color: #e8eef8 !important;
-        text-decoration: none; border-radius: 10px; font-size: 0.88rem; font-weight: 600;
-    }
-    .login-container {
-        background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
-        padding: 1rem; box-shadow: 0 10px 40px rgba(15,23,42,0.06);
-    }
-    .login-title { text-align: center; color: #0c1222; font-size: 2rem; font-weight: 700; }
-    .login-sub { text-align: center; color: #64748b; font-size: 0.92rem; }
-    .platform-mark {
+        padding: 0.4rem 0.9rem; background: rgba(255,255,255,0.14); color: #ecfdf5 !important;
+        text-decoration: none; border-radius: 10px; font-size: 0.85rem; font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.22);
+    }}
+    a.pro-link:hover {{ background: rgba(255,255,255,0.22); }}
+
+    /* ── Zone section bands ── */
+    .zone-band {{
+        display: flex; align-items: center; gap: 0.55rem;
+        padding: 0.45rem 0.75rem; border-radius: 10px 10px 0 0;
+        margin-top: 0.85rem; margin-bottom: 0;
+        font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em;
+    }}
+    .zone-band .zone-hint {{ font-weight: 500; font-size: 0.76rem; opacity: 0.85; margin-left: auto; }}
+    .zone-band.zone-filter {{ background: linear-gradient(90deg, #0f766e, #14b8a6); color: #ecfdf5; }}
+    .zone-band.zone-metrics {{ background: linear-gradient(90deg, #1e40af, #3b82f6); color: #eff6ff; }}
+    .zone-band.zone-charts {{ background: linear-gradient(90deg, #0369a1, #0ea5e9); color: #f0f9ff; }}
+    .zone-band.zone-records {{ background: linear-gradient(90deg, #b45309, #f59e0b); color: #fffbeb; }}
+
+    /* ── Filter panel (teal tint) ── */
+    .element-container:has(.zone-filter) + .element-container [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(145deg, {Z_FILTER_BG[0]} 0%, {Z_FILTER_BG[1]} 100%) !important;
+        border-color: #5eead4 !important;
+        border-top: none !important;
+        border-radius: 0 0 12px 12px !important;
+        padding: 0.75rem 0.9rem 0.5rem !important;
+        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.08);
+    }}
+
+    /* ── Metric cards (4 distinct tints) ── */
+    div[data-testid="stMetric"] {{
+        border-radius: 12px; padding: 0.55rem 0.75rem;
+        box-shadow: 0 2px 6px rgba(15,23,42,0.06);
+    }}
+    div[data-testid="stMetric"] label {{ font-size: 0.78rem !important; font-weight: 600 !important; }}
+    div[data-testid="stMetricValue"] {{ font-weight: 800 !important; font-size: 1.45rem !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetric"] {{
+        background: linear-gradient(135deg, {Z_METRIC_BGS[0][0]}, {Z_METRIC_BGS[0][1]});
+        border: 1px solid #6ee7b7;
+    }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetric"] label {{ color: #047857 !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] {{ color: #064e3b !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetric"] {{
+        background: linear-gradient(135deg, {Z_METRIC_BGS[1][0]}, {Z_METRIC_BGS[1][1]});
+        border: 1px solid #93c5fd;
+    }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetric"] label {{ color: #1d4ed8 !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"] {{ color: #1e3a8a !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetric"] {{
+        background: linear-gradient(135deg, {Z_METRIC_BGS[2][0]}, {Z_METRIC_BGS[2][1]});
+        border: 1px solid #fdba74;
+    }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetric"] label {{ color: #c2410c !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"] {{ color: #9a3412 !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetric"] {{
+        background: linear-gradient(135deg, {Z_METRIC_BGS[3][0]}, {Z_METRIC_BGS[3][1]});
+        border: 1px solid #c4b5fd;
+    }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetric"] label {{ color: #6d28d9 !important; }}
+    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetricValue"] {{ color: #4c1d95 !important; }}
+
+    /* ── Chart panels (sky blue tint) ── */
+    .element-container:has(.zone-charts) ~ .element-container:has([data-testid="stVerticalBlockBorderWrapper"]) [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(180deg, {Z_CHART_BG[0]} 0%, {Z_CHART_BG[1]} 100%) !important;
+        border-color: #7dd3fc !important;
+        border-radius: 12px !important;
+        padding: 0.65rem 0.85rem 0.45rem !important;
+        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.10);
+    }}
+    .element-container:has(.zone-charts) ~ .element-container:has([data-testid="stVerticalBlockBorderWrapper"]) [data-testid="stVerticalBlockBorderWrapper"] p {{
+        color: #0c4a6e;
+    }}
+    div[data-testid="stPyplotGlobalElement"] {{ margin-top: -0.25rem; padding-bottom: 0 !important; }}
+    div[data-testid="stPyplotGlobalElement"] img {{ display: block; width: 100%; height: auto; }}
+
+    /* ── Records table (warm amber tint) ── */
+    .element-container:has(.zone-records) + .element-container [data-testid="stDataFrame"] {{
+        border: 1px solid #fcd34d; border-radius: 0 0 12px 12px; overflow: hidden;
+        box-shadow: 0 2px 10px rgba(245, 158, 11, 0.10);
+    }}
+    .element-container:has(.zone-records) + .element-container [data-testid="stDataFrame"] > div {{
+        background: {Z_TABLE_BG};
+    }}
+
+    /* ── Report expander (soft yellow) ── */
+    div[data-testid="stExpander"] {{
+        background: linear-gradient(180deg, {Z_DETAIL_BG[0]}, {Z_DETAIL_BG[1]}) !important;
+        border: 1px solid #fde047 !important; border-radius: 12px !important;
+    }}
+    div[data-testid="stExpander"] summary {{ color: #854d0e !important; font-weight: 600; }}
+
+    /* ── Tabs ── */
+    [data-testid="stTabs"] {{
+        background: linear-gradient(180deg, #f0fdfa, #ccfbf1);
+        border: 1px solid #99f6e4; border-radius: 12px;
+        padding: 0.35rem 0.75rem 0.15rem; margin-bottom: 0.25rem;
+    }}
+    [data-testid="stTabs"] button {{ font-weight: 600; color: #0f766e !important; }}
+    [data-testid="stTabs"] [aria-selected="true"] {{
+        color: #134e4a !important; border-color: #0f766e !important;
+        background: rgba(255,255,255,0.55); border-radius: 8px 8px 0 0;
+    }}
+
+    .empty-panel {{
+        margin: 0.75rem 0; padding: 1.75rem 1rem; border: 1px dashed #94a3b8;
+        border-radius: 12px; background: linear-gradient(180deg, #f1f5f9, #e2e8f0); text-align: center;
+    }}
+    .empty-panel h3 {{ margin: 0 0 0.35rem; color: #0c1222; font-size: 1.05rem; }}
+    .empty-panel p {{ margin: 0; color: #64748b; font-size: 0.9rem; }}
+
+    /* ── Login ── */
+    .login-container {{
+        background: linear-gradient(160deg, #ecfdf5 0%, #f0fdfa 40%, #eff6ff 100%);
+        border: 1px solid #99f6e4; border-radius: 16px;
+        padding: 1rem; box-shadow: 0 10px 40px rgba(15,118,110,0.10);
+    }}
+    .login-title {{ text-align: center; color: #134e4a; font-size: 2rem; font-weight: 700; }}
+    .login-sub {{ text-align: center; color: #64748b; font-size: 0.92rem; }}
+    .platform-mark {{
         text-align: center; font-size: 0.75rem; font-weight: 700;
         letter-spacing: 0.16em; color: #0f766e; margin-top: 0.5rem;
-    }
-    [data-testid="stTabs"] button { font-weight: 600; }
-    [data-testid="stTabs"] [aria-selected="true"] { color: #0f766e !important; border-color: #14b8a6 !important; }
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -400,11 +497,41 @@ def _row_label(row) -> str:
     return f"{row.get('project_name') or ''} · {row.get('author') or ''} · {row.get('updated_at') or ''}"
 
 
+def _render_charts(df):
+    _zone_band("统计图表", "charts", "审查次数 · 变更行数")
+    r1c1, r1c2 = st.columns(2, gap="medium")
+    with r1c1:
+        _render_chart_panel(
+            "项目审查次数",
+            "各仓库 PR/MR 审查量（Top 12）",
+            lambda: generate_count_chart(df, "project_name", color=C_PRIMARY),
+        )
+    with r1c2:
+        _render_chart_panel(
+            "开发者审查次数",
+            "按提交者汇总（Top 12）",
+            lambda: generate_count_chart(df, "author", color=C_PRIMARY_LIGHT),
+        )
+    r2c1, r2c2 = st.columns(2, gap="medium")
+    with r2c1:
+        _render_chart_panel(
+            "项目变更行数",
+            "绿色 = 新增 · 红色 = 删除",
+            lambda: generate_delta_chart(df, "project_name"),
+        )
+    with r2c2:
+        _render_chart_panel(
+            "开发者变更行数",
+            "绿色 = 新增 · 红色 = 删除",
+            lambda: generate_delta_chart(df, "author"),
+        )
+
+
 def main_page():
     h1, h2 = st.columns([7, 3])
     with h1:
         st.markdown(
-            '<div class="dash-brand"><div class="name">ai-cr-lab</div>'
+            '<div class="dash-header-bar"><div class="name">ai-cr-lab</div>'
             '<div class="tag">代码审查统计 · JerryFish123/ai-cr-lab</div></div>',
             unsafe_allow_html=True,
         )
@@ -415,13 +542,13 @@ def main_page():
                 logout()
         with c2:
             st.markdown(
-                f'<div style="display:flex;justify-content:flex-end;padding-top:0.25rem;">'
+                f'<div style="display:flex;justify-content:flex-end;padding-top:0.2rem;">'
                 f'<a href="{PRO_VERSION_URL}" target="_blank" class="pro-link">GitHub</a></div>',
                 unsafe_allow_html=True,
             )
 
     current_date = datetime.date.today()
-    start_default = current_date - datetime.timedelta(days=7)
+    start_default = current_date - datetime.timedelta(days=90)
     show_push_tab = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
 
     if show_push_tab:
@@ -431,37 +558,37 @@ def main_page():
 
     def display_data(tab, service_func, columns, column_config, *, has_url: bool):
         with tab:
-            st.markdown('<div class="filter-panel"><div class="filter-panel-title">筛选条件</div>', unsafe_allow_html=True)
-            fc1, fc2, fc3, fc4 = st.columns([2.2, 1.4, 1.4, 1.4])
-            with fc1:
-                date_range = st.date_input(
-                    "统计时间段",
-                    value=(start_default, current_date),
-                    key=f"{tab}_date_range",
-                    help="一次选择起止日期",
-                )
-            start_date, end_date = _parse_date_range(date_range, start_default, current_date)
-            start_ts = int(datetime.datetime.combine(start_date, datetime.time.min).timestamp())
-            end_ts = int(datetime.datetime.combine(end_date, datetime.time.max).timestamp())
+            _zone_band("筛选条件", "filter", "时间段 · 项目 · PRD · 风险")
+            with st.container(border=True):
+                fc1, fc2, fc3, fc4 = st.columns([2.2, 1.4, 1.4, 1.4])
+                with fc1:
+                    date_range = st.date_input(
+                        "统计时间段",
+                        value=(start_default, current_date),
+                        key=f"{tab}_date_range",
+                        help="一次选择起止日期",
+                    )
+                start_date, end_date = _parse_date_range(date_range, start_default, current_date)
+                start_ts = int(datetime.datetime.combine(start_date, datetime.time.min).timestamp())
+                end_ts = int(datetime.datetime.combine(end_date, datetime.time.max).timestamp())
 
-            raw = get_data(service_func, updated_at_gte=start_ts, updated_at_lte=end_ts, columns=columns)
-            base_df = enrich_review_frame(pd.DataFrame(raw))
-            unique_authors = sorted(base_df["author"].dropna().unique().tolist()) if not base_df.empty else []
-            unique_projects = sorted(base_df["project_name"].dropna().unique().tolist()) if not base_df.empty else []
+                raw = get_data(service_func, updated_at_gte=start_ts, updated_at_lte=end_ts, columns=columns)
+                base_df = enrich_review_frame(pd.DataFrame(raw))
+                unique_authors = sorted(base_df["author"].dropna().unique().tolist()) if not base_df.empty else []
+                unique_projects = sorted(base_df["project_name"].dropna().unique().tolist()) if not base_df.empty else []
 
-            with fc2:
-                authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
-            with fc3:
-                project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
-            with fc4:
-                prd_filter = st.selectbox("PRD 状态", ["全部", "含PRD", "无PRD", "旧格式"], key=f"{tab}_prd_filter")
+                with fc2:
+                    authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
+                with fc3:
+                    project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
+                with fc4:
+                    prd_filter = st.selectbox("PRD 状态", ["全部", "含PRD", "无PRD", "旧格式"], key=f"{tab}_prd_filter")
 
-            fc5, fc6 = st.columns([1.4, 1.4])
-            with fc5:
-                risk_filter = st.selectbox("风险状态", ["全部", "有风险", "无明显风险"], key=f"{tab}_risk_filter")
-            with fc6:
-                st.caption(f"当前区间：**{start_date}** → **{end_date}**（共 {(end_date - start_date).days + 1} 天）")
-            st.markdown("</div>", unsafe_allow_html=True)
+                fc5, fc6 = st.columns([1.4, 2.6])
+                with fc5:
+                    risk_filter = st.selectbox("风险状态", ["全部", "有风险", "无明显风险"], key=f"{tab}_risk_filter")
+                with fc6:
+                    st.caption(f"当前区间：**{start_date}** → **{end_date}**（共 {(end_date - start_date).days + 1} 天）")
 
             df = filter_enriched_frame(
                 base_df,
@@ -471,6 +598,7 @@ def main_page():
                 risk_filter=risk_filter,
             )
 
+            _zone_band("核心指标", "metrics")
             m1, m2, m3, m4 = st.columns(4)
             total_records = len(df)
             project_count = int(df["project_name"].nunique()) if not df.empty else 0
@@ -493,7 +621,9 @@ def main_page():
                 )
                 return
 
-            st.markdown('<div class="section-title">审查记录</div>', unsafe_allow_html=True)
+            _render_charts(df)
+
+            _zone_band("审查记录", "records", "明细列表 · 报告下钻")
             display_cols = [
                 c
                 for c in [
@@ -505,34 +635,13 @@ def main_page():
             st.dataframe(df[display_cols], use_container_width=True, hide_index=True, column_config=column_config)
 
             labels = [_row_label(row) for _, row in df.iterrows()]
-            selected = st.selectbox("查看完整审查报告", labels, key=f"{tab}_detail_pick")
-            row = df.iloc[labels.index(selected)]
-            report = str(row.get("review_result") or "").strip() or "_（无审查正文）_"
-            st.markdown('<div class="detail-panel">', unsafe_allow_html=True)
-            st.markdown(report)
-            if has_url and row.get("url"):
-                st.markdown(f"[打开 PR/MR]({row.get('url')})")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown('<div class="section-title">统计图表</div>', unsafe_allow_html=True)
-            r1c1, r1c2 = st.columns(2)
-            with r1c1:
-                _chart_card("项目审查次数", "各仓库 PR/MR 审查量（Top 12）")
-                generate_count_chart(df, "project_name", "project", color=C_PRIMARY)
-                _chart_card_end()
-            with r1c2:
-                _chart_card("开发者审查次数", "按提交者汇总（Top 12）")
-                generate_count_chart(df, "author", "author", color=C_PRIMARY_LIGHT)
-                _chart_card_end()
-            r2c1, r2c2 = st.columns(2)
-            with r2c1:
-                _chart_card("项目变更行数", "绿色=新增 · 红色=删除")
-                generate_delta_chart(df, "project_name")
-                _chart_card_end()
-            with r2c2:
-                _chart_card("开发者变更行数", "绿色=新增 · 红色=删除")
-                generate_delta_chart(df, "author")
-                _chart_card_end()
+            with st.expander("查看完整审查报告", expanded=False):
+                selected = st.selectbox("选择记录", labels, key=f"{tab}_detail_pick", label_visibility="collapsed")
+                row = df.iloc[labels.index(selected)]
+                report = str(row.get("review_result") or "").strip() or "_（无审查正文）_"
+                st.markdown(report)
+                if has_url and row.get("url"):
+                    st.markdown(f"[打开 PR/MR]({row.get('url')})")
 
     mr_columns = [
         "project_name", "author", "source_branch", "target_branch", "updated_at",

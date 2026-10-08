@@ -37,6 +37,9 @@ data/prd_tmp/
 /*.docx
 /*.doc
 
+# Local docs (keep on disk, do not track)
+doc/
+
 # Test / coverage
 .coverage
 .pytest_cache/
