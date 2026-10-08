@@ -427,6 +427,15 @@ def build_legacy_report(rng: random.Random, *, stack: str, topic: str, project_n
         "部分 TODO 注释未关联 ticket",
         "import 未使用的静态分析告警",
         "Commit message 与变更范围不完全匹配",
+        f"{_line(paths[5] if len(paths) > 5 else paths[0], rng.randint(5, 40))} 行尾空格 / 缩进混用 tab-space",
+        "缺少 CHANGELOG entry",
+        f"Swagger `@ApiOperation` 描述仍为模板文案",
+    ]
+    regression = [
+        f"回归 `{paths[-1]}` 全量用例，关注 auth 与 pagination",
+        f"手工验证 {market} 语言包 key 是否齐全",
+        "对比 staging 与 prod 配置 diff，确认无意外 env 变更",
+        f"通知下游 `{rng.choice(_OTHER_PROJECTS)}` 消费方做联调 smoke",
     ]
     score = rng.randint(58, 86)
     market = rng.choice(_MARKETS)
@@ -443,7 +452,8 @@ def build_legacy_report(rng: random.Random, *, stack: str, topic: str, project_n
         f"{summary}\n\n"
         f"### 严重问题\n{_bullets(_sample(rng, severe, 4, 6))}\n\n"
         f"### 中等问题\n{_bullets(_sample(rng, medium, 3, 5))}\n\n"
-        f"### 轻微问题\n{_bullets(_sample(rng, minor, 2, 4))}\n\n"
+        f"### 轻微问题\n{_bullets(_sample(rng, minor, 3, 5))}\n\n"
+        f"### 回归建议\n{_bullets(_sample(rng, regression, 3, 4))}\n\n"
         f"### 审查结论\n"
         f"- 变更涉及 **{project_name}** `{topic}` 模块，建议修复严重项后再合并\n"
         f"- 预估修复工作量：{rng.randint(2, 8)} 人日\n\n"

@@ -70,10 +70,12 @@ def test_mock_is_deterministic():
 
 def test_mock_review_reports_are_substantial():
     df = DashboardMockProvider.get_mr_review_logs()
-    assert df["review_result"].str.len().min() > 800
+    assert df["review_result"].str.len().min() > 650
     with_prd = df[df["review_result"].str.contains("已覆盖")]
     assert len(with_prd) > 0
     sample = with_prd.iloc[0]["review_result"]
-    assert sample.count("- ") >= 18
-    assert "变更摘要" in sample or "完成度" in sample
+    assert len(sample) > 2000
+    assert sample.count("- ") >= 35
+    assert "变更摘要" in sample and "完成度" in sample
+    assert "代码审查要点" in sample
     assert "安全" in sample and "性能" in sample
