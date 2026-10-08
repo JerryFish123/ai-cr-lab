@@ -286,6 +286,10 @@ class DashboardMockProvider:
         return " · ".join(parts)
 
     @classmethod
+    def default_start_date(cls) -> datetime.date:
+        return _MOCK_START.date()
+
+    @classmethod
     def describe(cls) -> str:
         start = _MOCK_START.strftime("%Y-%m-%d")
         end = _MOCK_END.strftime("%Y-%m-%d")

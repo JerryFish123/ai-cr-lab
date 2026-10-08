@@ -508,37 +508,20 @@ def _row_label(row) -> str:
     return f"{row.get('project_name') or ''} · {row.get('author') or ''} · {row.get('updated_at') or ''}"
 
 
-def _mock_feature_unlocked() -> bool:
+def _mock_mode_active() -> bool:
+    """?query=1 → auto demo data; no extra click, no MySQL reads for dashboard."""
     return is_mock_query_unlocked(st.query_params)
 
 
-def _mock_mode_active() -> bool:
-    return _mock_feature_unlocked() and bool(st.session_state.get("dashboard_use_mock", False))
-
-
-def _render_mock_controls():
-    """Show mock toggle only when URL has ?query=1; never touches MySQL."""
-    if not _mock_feature_unlocked():
+def _render_mock_banner():
+    if not _mock_mode_active():
         return
-    if "dashboard_use_mock" not in st.session_state:
-        st.session_state["dashboard_use_mock"] = False
-    mc1, mc2 = st.columns([1.4, 8.6])
-    with mc1:
-        active = st.session_state["dashboard_use_mock"]
-        label = "关闭演示数据" if active else "加载演示数据"
-        if st.button(label, key="toggle_dashboard_mock", use_container_width=True):
-            st.session_state["dashboard_use_mock"] = not active
-            st.rerun()
-    with mc2:
-        if active:
-            st.markdown(
-                f'<div class="mock-demo-bar">'
-                f"<strong>演示模式</strong> · {DashboardMockProvider.describe()} · 与生产 MySQL 数据完全隔离"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.caption("已解锁演示数据：点击左侧按钮加载 Mock 审查记录（不影响真实数据）。")
+    st.markdown(
+        f'<div class="mock-demo-bar">'
+        f"<strong>演示模式</strong> · {DashboardMockProvider.describe()} · 与生产 MySQL 数据完全隔离"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _resolve_log_fetcher(use_mock: bool, *, kind: str):
@@ -602,11 +585,15 @@ def main_page():
                 unsafe_allow_html=True,
             )
 
-    _render_mock_controls()
+    _render_mock_banner()
     use_mock = _mock_mode_active()
 
     current_date = datetime.date.today()
-    start_default = current_date - datetime.timedelta(days=90)
+    start_default = (
+        DashboardMockProvider.default_start_date()
+        if use_mock
+        else current_date - datetime.timedelta(days=90)
+    )
     show_push_tab = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
 
     if show_push_tab:
