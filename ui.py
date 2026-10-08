@@ -4,8 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 
-# 设置Streamlit主题 - 必须是第一个st命令
-st.set_page_config(layout="wide", page_title="ai-cr-lab", page_icon="🔬", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="ai-cr-lab", page_icon="🔬", initial_sidebar_state="collapsed")
 
 import datetime
 import os
@@ -18,7 +17,6 @@ from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
-import streamlit as st
 from matplotlib.ticker import MaxNLocator
 from streamlit_cookies_manager import CookieManager
 
@@ -29,9 +27,21 @@ from biz.utils.dashboard_view import count_prd_reviews, enrich_review_frame, fil
 
 ReviewService.init_db()
 
+# --- Brand palette ---
+C_PRIMARY = "#0f766e"
+C_PRIMARY_LIGHT = "#14b8a6"
+C_ACCENT = "#3dd6c6"
+C_INK = "#0c1222"
+C_MUTED = "#64748b"
+C_BORDER = "#d7e0ea"
+C_ADD = "#34d399"
+C_DEL = "#f87171"
+C_CARD = "#ffffff"
+
+_DEFAULT_CHART_FIGSIZE = (6.2, 3.8)
+
 
 def set_global_font():
-    """设置全局字体，如果字体文件不存在则忽略并使用默认字体"""
     font_path = "fonts/SourceHanSansCN-Regular.otf"
     if Path(font_path).exists():
         try:
@@ -41,121 +51,78 @@ def set_global_font():
             st.warning(f"字体加载失败，使用默认字体。错误信息：{e}")
     else:
         st.warning(f"字体文件未找到：{font_path}，将使用默认字体。")
+    mpl.rcParams["axes.unicode_minus"] = False
 
-    mpl.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
 
-
-# 在项目启动时调用
 set_global_font()
 
-# 从环境变量中读取用户名和密码
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin")
-USER_CREDENTIALS = {
-    DASHBOARD_USER: DASHBOARD_PASSWORD
-}
-
-# 用于生成和验证token的密钥
-SECRET_KEY = os.getenv("DASHBOARD_SECRET_KEY", "fac8cf149bdd616c07c1a675c4571ccacc40d7f7fe16914cfe0f9f9d966bb773")
-
-# 初始化cookie管理器
+USER_CREDENTIALS = {DASHBOARD_USER: DASHBOARD_PASSWORD}
+SECRET_KEY = os.getenv(
+    "DASHBOARD_SECRET_KEY",
+    "fac8cf149bdd616c07c1a675c4571ccacc40d7f7fe16914cfe0f9f9d966bb773",
+)
 cookies = CookieManager()
 
 
 def generate_token(username):
-    """生成包含时间戳的认证token"""
     timestamp = str(int(time.time()))
     message = f"{username}:{timestamp}"
-
-    # 使用HMAC-SHA256生成签名
-    signature = hmac.new(
-        SECRET_KEY.encode(),
-        message.encode(),
-        hashlib.sha256
-    ).digest()
-
-    # 将消息和签名编码为base64
-    token = base64.b64encode(f"{message}:{base64.b64encode(signature).decode()}".encode()).decode()
-    return token
+    signature = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
+    return base64.b64encode(f"{message}:{base64.b64encode(signature).decode()}".encode()).decode()
 
 
 def verify_token(token):
-    """验证token的有效性并提取用户名"""
     try:
-        # 解码token
         decoded = base64.b64decode(token.encode()).decode()
         message, signature = decoded.rsplit(":", 1)
         username, timestamp = message.split(":", 1)
-
-        # 验证签名
-        expected_signature = hmac.new(
-            SECRET_KEY.encode(),
-            message.encode(),
-            hashlib.sha256
-        ).digest()
-
-        actual_signature = base64.b64decode(signature)
-
-        if not hmac.compare_digest(expected_signature, actual_signature):
+        expected_signature = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected_signature, base64.b64decode(signature)):
             return None
-
-        # 检查token是否过期（30天）
         if int(time.time()) - int(timestamp) > 30 * 24 * 60 * 60:
             return None
-
         return username
-    except:
+    except Exception:
         return None
 
 
-# 检查登录状态
 def check_login_status():
     if not cookies.ready():
         st.stop()
-
-    if 'login_status' not in st.session_state:
-        st.session_state['login_status'] = False
-
-    # 尝试从cookie获取token
-    auth_token = cookies.get('auth_token')
+    if "login_status" not in st.session_state:
+        st.session_state["login_status"] = False
+    auth_token = cookies.get("auth_token")
     if auth_token:
         username = verify_token(auth_token)
         if username and username in USER_CREDENTIALS:
-            st.session_state['login_status'] = True
-            st.session_state['username'] = username
-            st.session_state['saved_username'] = username
+            st.session_state["login_status"] = True
+            st.session_state["username"] = username
+            st.session_state["saved_username"] = username
+    return st.session_state["login_status"]
 
-    return st.session_state['login_status']
 
-
-# 设置登录状态
 def set_login_status(username, remember):
-    st.session_state['login_status'] = True
-    st.session_state['username'] = username
-    st.session_state['saved_username'] = username if remember else ''
-
+    st.session_state["login_status"] = True
+    st.session_state["username"] = username
+    st.session_state["saved_username"] = username if remember else ""
     if remember:
-        # 生成并保存token到cookie
-        auth_token = generate_token(username)
-        cookies['auth_token'] = auth_token
-    else:
-        # 如果不记住登录状态，清除cookie
-        if 'auth_token' in cookies:
-            del cookies['auth_token']
+        cookies["auth_token"] = generate_token(username)
+    elif "auth_token" in cookies:
+        del cookies["auth_token"]
     cookies.save()
 
 
-# 获取保存的用户名
 def get_saved_credentials():
-    auth_token = cookies.get('auth_token')
+    auth_token = cookies.get("auth_token")
     if auth_token:
         username = verify_token(auth_token)
         if username:
-            return username, ''
-    return st.session_state.get('saved_username', ''), ''
+            return username, ""
+    return st.session_state.get("saved_username", ""), ""
 
 
-# 登录验证函数
 def authenticate(username, password, remember_password=False):
     if username in USER_CREDENTIALS and USER_CREDENTIALS[username] == password:
         set_login_status(username, remember_password)
@@ -163,418 +130,299 @@ def authenticate(username, password, remember_password=False):
     return False
 
 
-# 获取数据函数
 def get_data(service_func, authors=None, project_names=None, updated_at_gte=None, updated_at_lte=None, columns=None):
-    df = service_func(authors=authors, project_names=project_names, updated_at_gte=updated_at_gte,
-                      updated_at_lte=updated_at_lte)
-
+    df = service_func(
+        authors=authors,
+        project_names=project_names,
+        updated_at_gte=updated_at_gte,
+        updated_at_lte=updated_at_lte,
+    )
     if df.empty:
         return pd.DataFrame(columns=columns)
-
     if "updated_at" in df.columns:
         df["updated_at"] = df["updated_at"].apply(
             lambda ts: datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-            if isinstance(ts, (int, float)) else ts
+            if isinstance(ts, (int, float))
+            else ts
         )
 
     def format_delta(row):
-        if not math.isnan(row['additions']) and not math.isnan(row['deletions']):
+        if not math.isnan(row["additions"]) and not math.isnan(row["deletions"]):
             return f"+{int(row['additions'])}  -{int(row['deletions'])}"
-        else:
-            return ""
+        return ""
 
     if "additions" in df.columns and "deletions" in df.columns:
         df["delta"] = df.apply(format_delta, axis=1)
     else:
         df["delta"] = ""
-
-    data = df[columns]
-    return data
+    return df[columns]
 
 
-# 隐藏默认的Streamlit菜单和页眉（display:none 避免 visibility:hidden 仍占位导致顶部留白）
-st.markdown("""
-    <style>
-        #MainMenu {visibility: hidden;}
-        header[data-testid="stHeader"] {display: none !important;}
-        footer {visibility: hidden;}
-        div.block-container {padding-top: 0rem !important; padding-bottom: 0.5rem !important;}
-        .main .block-container {margin-top: 0 !important;}
-        section[data-testid="stMain"] > div {padding-top: 0rem !important;}
-    </style>
-    """, unsafe_allow_html=True)
+def _parse_date_range(range_val, default_start, default_end):
+    """Normalize st.date_input range (tuple or single date)."""
+    if isinstance(range_val, (list, tuple)) and len(range_val) == 2:
+        start_date, end_date = range_val[0], range_val[1]
+    elif isinstance(range_val, datetime.date):
+        start_date = end_date = range_val
+    else:
+        start_date, end_date = default_start, default_end
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+    return start_date, end_date
 
-# 自定义CSS样式（ai-cr-lab 品牌色：墨蓝 + 青绿）
+
+def _style_chart_axes(ax, *, horizontal=False):
+    ax.set_facecolor("#fafbfc")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color(C_BORDER)
+    ax.spines["bottom"].set_color(C_BORDER)
+    ax.tick_params(colors=C_MUTED, labelsize=9)
+    ax.grid(axis="x" if horizontal else "y", color="#e8edf2", linestyle="-", linewidth=0.8, alpha=0.9)
+    ax.set_axisbelow(True)
+
+
+def _annotate_hbars(ax, bars, fmt="{:.0f}"):
+    for bar in bars:
+        w = bar.get_width()
+        if w == 0:
+            continue
+        ax.text(
+            w + max(abs(w) * 0.02, 0.08),
+            bar.get_y() + bar.get_height() / 2,
+            fmt.format(w),
+            va="center",
+            ha="left",
+            fontsize=8,
+            color=C_INK,
+            fontweight=600,
+        )
+
+
+def _chart_card(title: str, subtitle: str = ""):
+    sub = f'<div class="chart-sub">{subtitle}</div>' if subtitle else ""
+    st.markdown(
+        f'<div class="chart-card"><div class="chart-head"><div class="chart-title">{title}</div>{sub}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _chart_card_end():
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def generate_count_chart(df, group_col: str, title_hint: str, *, color: str = C_PRIMARY):
+    if df.empty:
+        st.info("没有数据可供展示")
+        return
+    counts = df[group_col].value_counts().reset_index()
+    counts.columns = [group_col, "count"]
+    counts = counts.sort_values("count", ascending=True).tail(12)
+
+    fig, ax = plt.subplots(figsize=_DEFAULT_CHART_FIGSIZE)
+    y_pos = range(len(counts))
+    bars = ax.barh(
+        y_pos,
+        counts["count"],
+        color=color,
+        height=0.62,
+        edgecolor="white",
+        linewidth=0.6,
+    )
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(counts[group_col], fontsize=9)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    _style_chart_axes(ax, horizontal=True)
+    _annotate_hbars(ax, bars)
+    ax.set_xlabel("审查次数", fontsize=9, color=C_MUTED, labelpad=8)
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+def generate_delta_chart(df, group_col: str):
+    if df.empty:
+        st.info("没有数据可供展示")
+        return
+    if "additions" not in df.columns or "deletions" not in df.columns:
+        st.warning("无法生成代码行数图表：缺少必要的数据列")
+        return
+
+    add = df.groupby(group_col)["additions"].sum().reset_index()
+    add.columns = [group_col, "additions"]
+    sub = df.groupby(group_col)["deletions"].sum().reset_index()
+    sub.columns = [group_col, "deletions"]
+    merged = add.merge(sub, on=group_col, how="outer").fillna(0)
+    merged["total"] = merged["additions"] + merged["deletions"]
+    merged = merged.sort_values("total", ascending=True).tail(12)
+
+    fig, ax = plt.subplots(figsize=_DEFAULT_CHART_FIGSIZE)
+    y = range(len(merged))
+    h = 0.36
+    ax.barh([i - h / 2 for i in y], merged["additions"], height=h, color=C_ADD, label="新增", edgecolor="white")
+    ax.barh([i + h / 2 for i in y], merged["deletions"], height=h, color=C_DEL, label="删除", edgecolor="white")
+    ax.set_yticks(list(y))
+    ax.set_yticklabels(merged[group_col], fontsize=9)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    _style_chart_axes(ax, horizontal=True)
+    ax.set_xlabel("行数", fontsize=9, color=C_MUTED, labelpad=8)
+    ax.legend(loc="lower right", frameon=False, fontsize=8)
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+# --- Global CSS ---
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap');
+    #MainMenu {visibility: hidden;}
+    header[data-testid="stHeader"] {display: none !important;}
+    footer {visibility: hidden;}
+    div.block-container {padding-top: 0.5rem !important; padding-bottom: 1rem !important; max-width: 1280px;}
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
     html, body, [class*="css"] { font-family: "Outfit", "Source Han Sans CN", sans-serif; }
     .main {
         background:
-          radial-gradient(900px 420px at 0% 0%, rgba(61, 214, 198, 0.10), transparent 55%),
-          linear-gradient(180deg, #f4f7fb 0%, #eef3f8 100%);
-        padding-top: 0rem;
+          radial-gradient(1000px 480px at 100% -10%, rgba(61, 214, 198, 0.12), transparent 50%),
+          radial-gradient(800px 400px at 0% 0%, rgba(15, 118, 110, 0.08), transparent 45%),
+          linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
     }
     .stButton>button {
-        background-color: #0f766e;
-        color: white;
-        border-radius: 10px;
-        padding: 0.5rem 1.4rem;
-        border: none;
-        transition: all 0.25s ease;
-        font-weight: 600;
+        background: linear-gradient(135deg, #0f766e, #0d9488);
+        color: white; border: none; border-radius: 10px; font-weight: 600;
     }
-    .stButton>button:hover {
-        background-color: #0d9488;
-        box-shadow: 0 4px 14px rgba(15, 118, 110, 0.25);
-        color: #ffffff;
+    .stButton>button:hover { box-shadow: 0 4px 14px rgba(15, 118, 110, 0.28); }
+    div[data-testid="stMetric"] {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+        padding: 0.65rem 0.85rem; box-shadow: 0 1px 3px rgba(15,23,42,0.04);
     }
-    .stTextInput>div>div>input {
-        border: 1px solid #c9d4e0;
-        border-radius: 8px;
-        padding: 0.5rem;
+    div[data-testid="stMetric"] label { color: #64748b !important; font-size: 0.82rem !important; }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #0c1222 !important; font-weight: 700 !important; }
+    .filter-panel {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
+        padding: 1rem 1.15rem 0.35rem; margin: 0.75rem 0 1rem;
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
     }
-    .stCheckbox>div>div>input { accent-color: #0f766e; }
-    .stDataFrame {
-        border: 1px solid #d7e0ea;
-        border-radius: 10px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    .filter-panel-title {
+        font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em;
+        text-transform: uppercase; color: #0f766e; margin-bottom: 0.65rem;
     }
-    .stMarkdown { font-size: 16px; }
-    .login-title {
-        text-align: center;
-        color: #0c1222;
-        margin: 0.35rem 0 0.15rem;
-        font-size: 2.4rem;
-        font-weight: 700;
-        letter-spacing: -0.03em;
+    .section-title {
+        font-size: 1.05rem; font-weight: 700; color: #0c1222;
+        margin: 1.25rem 0 0.65rem; padding-left: 0.65rem;
+        border-left: 3px solid #14b8a6;
     }
-    .login-sub {
-        text-align: center;
-        color: #5b6b7c;
-        font-size: 0.95rem;
-        margin-bottom: 1rem;
+    .chart-card {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+        padding: 0.85rem 0.9rem 0.25rem; margin-bottom: 0.75rem;
+        box-shadow: 0 2px 12px rgba(15, 23, 42, 0.035);
+        min-height: 420px;
+    }
+    .chart-head { margin-bottom: 0.35rem; padding-bottom: 0.5rem; border-bottom: 1px solid #f1f5f9; }
+    .chart-title { font-size: 0.95rem; font-weight: 700; color: #0c1222; }
+    .chart-sub { font-size: 0.78rem; color: #64748b; margin-top: 0.15rem; }
+    .detail-panel {
+        margin: 0.75rem 0 1rem; padding: 1rem 1.15rem;
+        border: 1px solid #e2e8f0; border-radius: 14px; background: #fff;
+    }
+    .empty-panel {
+        margin: 1rem 0; padding: 2rem 1.25rem; border: 1px dashed #cbd5e1;
+        border-radius: 14px; background: rgba(255,255,255,0.85); text-align: center;
+    }
+    .empty-panel h3 { margin: 0 0 0.4rem; color: #0c1222; font-size: 1.1rem; }
+    .empty-panel p { margin: 0; color: #64748b; font-size: 0.92rem; }
+    .dash-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.35rem 0 0.5rem; margin-bottom: 0.25rem;
+    }
+    .dash-brand .name { font-size: 1.45rem; font-weight: 700; color: #0c1222; letter-spacing: -0.02em; }
+    .dash-brand .tag { font-size: 0.82rem; color: #64748b; margin-top: 0.1rem; }
+    a.pro-link {
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 0.45rem 1rem; background: #0c1222; color: #e8eef8 !important;
+        text-decoration: none; border-radius: 10px; font-size: 0.88rem; font-weight: 600;
     }
     .login-container {
-        background: rgba(255,255,255,0.92);
-        border: 1px solid #d7e0ea;
-        border-radius: 16px;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-        margin-top: 0rem;
-        padding: 0.5rem 0.25rem 1rem;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
+        padding: 1rem; box-shadow: 0 10px 40px rgba(15,23,42,0.06);
     }
+    .login-title { text-align: center; color: #0c1222; font-size: 2rem; font-weight: 700; }
+    .login-sub { text-align: center; color: #64748b; font-size: 0.92rem; }
     .platform-mark {
-        text-align: center;
-        font-size: 0.8rem;
-        font-weight: 700;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: #0f766e;
-        margin-top: 0.75rem;
+        text-align: center; font-size: 0.75rem; font-weight: 700;
+        letter-spacing: 0.16em; color: #0f766e; margin-top: 0.5rem;
     }
-    a.pro-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.5rem 1.2rem;
-        background: #0c1222;
-        color: #e8eef8 !important;
-        text-decoration: none;
-        border-radius: 10px;
-        font-size: 0.92rem;
-        font-weight: 600;
-        transition: all 0.25s ease;
-        border: none;
-        box-sizing: border-box;
-        min-height: 2.25rem;
-        line-height: 1.5;
-        white-space: nowrap;
-    }
-    a.pro-link:hover {
-        background: #1a2740;
-        color: #fff !important;
-    }
-    .pro-link-wrap {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        margin-left: 0.5rem;
-        min-width: 0;
-        overflow: hidden;
-    }
-    .pro-link-wrap .pro-link { max-width: 100%; }
-    .empty-panel {
-        margin: 0.75rem 0 1.25rem;
-        padding: 1.75rem 1.25rem;
-        border: 1px dashed #b7c5d4;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.7);
-        text-align: center;
-    }
-    .empty-panel h3 {
-        margin: 0 0 0.4rem;
-        color: #0c1222;
-        font-size: 1.15rem;
-        font-weight: 700;
-    }
-    .empty-panel p {
-        margin: 0;
-        color: #5b6b7c;
-        font-size: 0.95rem;
-        line-height: 1.5;
-    }
-    .dash-brand {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        margin: 0 0 0.35rem 0;
-    }
-    .dash-brand .name {
-        font-size: 1.35rem;
-        font-weight: 700;
-        letter-spacing: -0.03em;
-        color: #0c1222;
-        line-height: 1.15;
-    }
-    .dash-brand .tag {
-        font-size: 0.82rem;
-        color: #5b6b7c;
-    }
-    div[data-testid="stMetric"] {
-        background: rgba(255,255,255,0.78);
-        border: 1px solid #d7e0ea;
-        border-radius: 12px;
-        padding: 0.55rem 0.75rem 0.65rem;
-        margin-bottom: 0.35rem;
-    }
-    .detail-panel {
-        margin: 0.5rem 0 1rem;
-        padding: 1rem 1.1rem;
-        border: 1px solid #d7e0ea;
-        border-radius: 12px;
-        background: rgba(255,255,255,0.85);
-    }
+    [data-testid="stTabs"] button { font-weight: 600; }
+    [data-testid="stTabs"] [aria-selected="true"] { color: #0f766e !important; border-color: #14b8a6 !important; }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
-# 登录界面
 def login_page():
-    # 使用 st.columns 创建居中布局
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
         st.markdown('<div class="platform-mark">AI-CR-LAB</div>', unsafe_allow_html=True)
         st.markdown('<h1 class="login-title">代码审查控制台</h1>', unsafe_allow_html=True)
         st.markdown('<p class="login-sub">GitHub · JerryFish123/ai-cr-lab</p>', unsafe_allow_html=True)
-
-        # 如果用户名和密码都为 'admin'，提示用户修改密码
         if DASHBOARD_USER == "admin" and DASHBOARD_PASSWORD == "admin":
-            st.warning(
-                "安全提示：检测到默认用户名和密码为 'admin'，存在安全风险！\n\n"
-                "请立即修改：\n"
-                "1. 打开 `.env` 文件\n"
-                "2. 修改 `DASHBOARD_USER` 和 `DASHBOARD_PASSWORD` 变量\n"
-                "3. 保存并重启应用"
-            )
-            st.write(f"当前用户名: `{DASHBOARD_USER}`, 当前密码: `{DASHBOARD_PASSWORD}`")
-
-        # 获取保存的用户名和密码
+            st.warning("检测到默认账号密码 admin/admin，请在 .env 中修改 DASHBOARD_USER / DASHBOARD_PASSWORD。")
         saved_username, saved_password = get_saved_credentials()
-
-        # 创建一个form，支持回车提交
         with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("👤 用户名", value=saved_username)
-            password = st.text_input("🔑 密码", type="password", value=saved_password)
-            remember_password = st.checkbox("记住密码", value=bool(saved_username))
-            submit = st.form_submit_button("登 录")
-
-            if submit:
+            username = st.text_input("用户名", value=saved_username)
+            password = st.text_input("密码", type="password", value=saved_password)
+            remember_password = st.checkbox("记住登录", value=bool(saved_username))
+            if st.form_submit_button("登 录"):
                 if authenticate(username, password, remember_password):
-                    st.rerun()  # 重新运行应用以显示主要内容
+                    st.rerun()
                 else:
                     st.error("用户名或密码错误")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
-# 2×2 图表画布
-_DEFAULT_CHART_FIGSIZE = (5.5, 3.6)
-_DEFAULT_XTICK_FONT = 9
-
-
-# 生成项目提交数量图表
-def generate_project_count_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个项目的提交数量
-    project_counts = df['project_name'].value_counts().reset_index()
-    project_counts.columns = ['project_name', 'count']
-
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['tab20'].resampled(len(project_counts))
-
-    # 显示提交数量柱状图
-    fig1, ax1 = plt.subplots(figsize=figsize)
-    ax1.bar(
-        project_counts['project_name'],
-        project_counts['count'],
-        color=[colors(i) for i in range(len(project_counts))]
-    )
-    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig1)
-    plt.close(fig1)
-
-
-# 生成人员提交数量图表
-def generate_author_count_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个人员的提交数量
-    author_counts = df['author'].value_counts().reset_index()
-    author_counts.columns = ['author', 'count']
-
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['Paired'].resampled(len(author_counts))
-    # 显示提交数量柱状图
-    fig1, ax1 = plt.subplots(figsize=figsize)
-    ax1.bar(
-        author_counts['author'],
-        author_counts['count'],
-        color=[colors(i) for i in range(len(author_counts))]
-    )
-    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig1)
-    plt.close(fig1)
-
-
-def generate_author_code_line_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    if 'additions' not in df.columns or 'deletions' not in df.columns:
-        st.warning("无法生成代码行数图表：缺少必要的数据列")
-        return
-
-    author_code_lines_add = df.groupby('author')['additions'].sum().reset_index()
-    author_code_lines_add.columns = ['author', 'additions']
-    author_code_lines_del = df.groupby('author')['deletions'].sum().reset_index()
-    author_code_lines_del.columns = ['author', 'deletions']
-    fig3, ax3 = plt.subplots(figsize=figsize)
-    ax3.bar(
-        author_code_lines_add['author'],
-        author_code_lines_add['additions'],
-        color=(0.7, 1, 0.7)
-    )
-    ax3.bar(
-        author_code_lines_del['author'],
-        -author_code_lines_del['deletions'],
-        color=(1, 0.7, 0.7)
-    )
-    ax3.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig3)
-    plt.close(fig3)
-
-
-def generate_project_code_line_chart(df, figsize=_DEFAULT_CHART_FIGSIZE, xtick_fs=_DEFAULT_XTICK_FONT):
-    """按项目汇总增删行数，展示形式与 generate_author_code_line_chart 一致（绿色柱为新增，红色柱为删减为负轴）"""
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    if 'additions' not in df.columns or 'deletions' not in df.columns:
-        st.warning("无法生成项目代码行数图表：缺少必要的数据列")
-        return
-
-    proj_add = df.groupby('project_name')['additions'].sum().reset_index()
-    proj_add.columns = ['project_name', 'additions']
-    proj_del = df.groupby('project_name')['deletions'].sum().reset_index()
-    proj_del.columns = ['project_name', 'deletions']
-
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.bar(
-        proj_add['project_name'],
-        proj_add['additions'],
-        color=(0.7, 1, 0.7),
-    )
-    ax.bar(
-        proj_del['project_name'],
-        -proj_del['deletions'],
-        color=(1, 0.7, 0.7),
-    )
-    ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
-    plt.xticks(rotation=45, ha='right', fontsize=xtick_fs)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-
-# 退出登录函数
 def logout():
-    # 清除session状态
-    st.session_state['login_status'] = False
-    st.session_state.pop('username', None)
-    st.session_state.pop('saved_username', None)
-
-    # 清除cookie
-    if 'auth_token' in cookies:
-        del cookies['auth_token']
+    st.session_state["login_status"] = False
+    st.session_state.pop("username", None)
+    st.session_state.pop("saved_username", None)
+    if "auth_token" in cookies:
+        del cookies["auth_token"]
     cookies.save()
-
     st.rerun()
 
 
-# Pro 版文档链接（登录后展示）
 PRO_VERSION_URL = "https://github.com/JerryFish123/ai-cr-lab"
 
 
 def _row_label(row) -> str:
-    project = row.get("project_name") or ""
-    author = row.get("author") or ""
-    when = row.get("updated_at") or ""
-    return f"{project} · {author} · {when}"
+    return f"{row.get('project_name') or ''} · {row.get('author') or ''} · {row.get('updated_at') or ''}"
 
 
-# 主要内容
 def main_page():
-    head_left, head_right = st.columns([7.2, 2.8])
-    with head_left:
+    h1, h2 = st.columns([7, 3])
+    with h1:
         st.markdown(
-            '<div class="dash-brand">'
-            '<div class="name">ai-cr-lab</div>'
-            '<div class="tag">代码审查统计 · JerryFish123/ai-cr-lab</div>'
-            '</div>',
+            '<div class="dash-brand"><div class="name">ai-cr-lab</div>'
+            '<div class="tag">代码审查统计 · JerryFish123/ai-cr-lab</div></div>',
             unsafe_allow_html=True,
         )
-    with head_right:
-        sub_col_logout, sub_col_pro = st.columns([1.3, 1.5])
-        with sub_col_logout:
+    with h2:
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("退出登录", key="logout_button", use_container_width=True):
                 logout()
-        with sub_col_pro:
+        with c2:
             st.markdown(
-                '<div class="pro-link-wrap">'
-                '<a href="' + PRO_VERSION_URL + '" target="_blank" rel="noopener noreferrer" class="pro-link">GitHub 仓库</a>'
-                '</div>',
-                unsafe_allow_html=True
+                f'<div style="display:flex;justify-content:flex-end;padding-top:0.25rem;">'
+                f'<a href="{PRO_VERSION_URL}" target="_blank" class="pro-link">GitHub</a></div>',
+                unsafe_allow_html=True,
             )
 
     current_date = datetime.date.today()
-    start_date_default = current_date - datetime.timedelta(days=7)
-    show_push_tab = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'
+    start_default = current_date - datetime.timedelta(days=7)
+    show_push_tab = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
 
     if show_push_tab:
         mr_tab, push_tab = st.tabs(["合并请求", "代码推送"])
@@ -583,45 +431,37 @@ def main_page():
 
     def display_data(tab, service_func, columns, column_config, *, has_url: bool):
         with tab:
-            f1, f2, f3, f4 = st.columns(4)
-            with f1:
-                start_date = st.date_input("开始日期", start_date_default, key=f"{tab}_start_date")
-            with f2:
-                end_date = st.date_input("结束日期", current_date, key=f"{tab}_end_date")
+            st.markdown('<div class="filter-panel"><div class="filter-panel-title">筛选条件</div>', unsafe_allow_html=True)
+            fc1, fc2, fc3, fc4 = st.columns([2.2, 1.4, 1.4, 1.4])
+            with fc1:
+                date_range = st.date_input(
+                    "统计时间段",
+                    value=(start_default, current_date),
+                    key=f"{tab}_date_range",
+                    help="一次选择起止日期",
+                )
+            start_date, end_date = _parse_date_range(date_range, start_default, current_date)
+            start_ts = int(datetime.datetime.combine(start_date, datetime.time.min).timestamp())
+            end_ts = int(datetime.datetime.combine(end_date, datetime.time.max).timestamp())
 
-            start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
-            end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
-
-            # Single DB fetch for date range; filter locally afterwards.
-            raw = get_data(
-                service_func,
-                updated_at_gte=int(start_datetime.timestamp()),
-                updated_at_lte=int(end_datetime.timestamp()),
-                columns=columns,
-            )
+            raw = get_data(service_func, updated_at_gte=start_ts, updated_at_lte=end_ts, columns=columns)
             base_df = enrich_review_frame(pd.DataFrame(raw))
-
             unique_authors = sorted(base_df["author"].dropna().unique().tolist()) if not base_df.empty else []
             unique_projects = sorted(base_df["project_name"].dropna().unique().tolist()) if not base_df.empty else []
 
-            with f3:
+            with fc2:
                 authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
-            with f4:
+            with fc3:
                 project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
+            with fc4:
+                prd_filter = st.selectbox("PRD 状态", ["全部", "含PRD", "无PRD", "旧格式"], key=f"{tab}_prd_filter")
 
-            f5, f6 = st.columns(2)
-            with f5:
-                prd_filter = st.selectbox(
-                    "PRD 状态",
-                    ["全部", "含PRD", "无PRD", "旧格式"],
-                    key=f"{tab}_prd_filter",
-                )
-            with f6:
-                risk_filter = st.selectbox(
-                    "风险状态",
-                    ["全部", "有风险", "无明显风险"],
-                    key=f"{tab}_risk_filter",
-                )
+            fc5, fc6 = st.columns([1.4, 1.4])
+            with fc5:
+                risk_filter = st.selectbox("风险状态", ["全部", "有风险", "无明显风险"], key=f"{tab}_risk_filter")
+            with fc6:
+                st.caption(f"当前区间：**{start_date}** → **{end_date}**（共 {(end_date - start_date).days + 1} 天）")
+            st.markdown("</div>", unsafe_allow_html=True)
 
             df = filter_enriched_frame(
                 base_df,
@@ -631,15 +471,15 @@ def main_page():
                 risk_filter=risk_filter,
             )
 
+            m1, m2, m3, m4 = st.columns(4)
             total_records = len(df)
             project_count = int(df["project_name"].nunique()) if not df.empty else 0
-            if not df.empty and "additions" in df.columns and "deletions" in df.columns:
-                total_lines = int(df["additions"].fillna(0).sum() + df["deletions"].fillna(0).sum())
-            else:
-                total_lines = 0
+            total_lines = (
+                int(df["additions"].fillna(0).sum() + df["deletions"].fillna(0).sum())
+                if not df.empty and "additions" in df.columns
+                else 0
+            )
             prd_count = count_prd_reviews(df["review_result"]) if (not df.empty and "review_result" in df.columns) else 0
-
-            m1, m2, m3, m4 = st.columns(4)
             m1.metric("总审查次数", total_records)
             m2.metric("涉及项目数", project_count)
             m3.metric("代码变更总行数", total_lines)
@@ -647,29 +487,22 @@ def main_page():
 
             if df.empty:
                 st.markdown(
-                    '<div class="empty-panel">'
-                    "<h3>暂无审查记录</h3>"
-                    "<p>在业务仓库配置 Webhook 指向 "
-                    "<code>/review/webhook</code> 后，合并请求或推送产生的审查会显示在这里；"
-                    "也可放宽上方日期 / PRD / 风险筛选后再试。</p>"
-                    "</div>",
+                    '<div class="empty-panel"><h3>暂无审查记录</h3>'
+                    "<p>调整时间段或筛选条件，或确认 Webhook 已指向 <code>/review/webhook</code>。</p></div>",
                     unsafe_allow_html=True,
                 )
                 return
 
+            st.markdown('<div class="section-title">审查记录</div>', unsafe_allow_html=True)
             display_cols = [
-                c for c in [
+                c
+                for c in [
                     "project_name", "author", "source_branch", "target_branch", "branch",
                     "updated_at", "delta", "kind_label", "summary", "url",
                 ]
                 if c in df.columns
             ]
-            st.dataframe(
-                df[display_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config=column_config,
-            )
+            st.dataframe(df[display_cols], use_container_width=True, hide_index=True, column_config=column_config)
 
             labels = [_row_label(row) for _, row in df.iterrows()]
             selected = st.selectbox("查看完整审查报告", labels, key=f"{tab}_detail_pick")
@@ -679,32 +512,27 @@ def main_page():
             st.markdown(report)
             if has_url and row.get("url"):
                 st.markdown(f"[打开 PR/MR]({row.get('url')})")
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            chart_title_css = (
-                "<div style='text-align:center;font-size:clamp(12px,1vw,15px);"
-                "line-height:1.2;margin:0.4rem 0 0.25rem 0;'><b>{}</b></div>"
-            )
+            st.markdown('<div class="section-title">统计图表</div>', unsafe_allow_html=True)
             r1c1, r1c2 = st.columns(2)
             with r1c1:
-                st.markdown(chart_title_css.format("项目审查次数"), unsafe_allow_html=True)
-                generate_project_count_chart(df)
+                _chart_card("项目审查次数", "各仓库 PR/MR 审查量（Top 12）")
+                generate_count_chart(df, "project_name", "project", color=C_PRIMARY)
+                _chart_card_end()
             with r1c2:
-                st.markdown(chart_title_css.format("开发者审查次数"), unsafe_allow_html=True)
-                generate_author_count_chart(df)
+                _chart_card("开发者审查次数", "按提交者汇总（Top 12）")
+                generate_count_chart(df, "author", "author", color=C_PRIMARY_LIGHT)
+                _chart_card_end()
             r2c1, r2c2 = st.columns(2)
             with r2c1:
-                st.markdown(chart_title_css.format("项目变更行数"), unsafe_allow_html=True)
-                if 'additions' in df.columns and 'deletions' in df.columns:
-                    generate_project_code_line_chart(df)
-                else:
-                    st.info("无法显示代码行数图表：缺少必要的数据列")
+                _chart_card("项目变更行数", "绿色=新增 · 红色=删除")
+                generate_delta_chart(df, "project_name")
+                _chart_card_end()
             with r2c2:
-                st.markdown(chart_title_css.format("开发者变更行数"), unsafe_allow_html=True)
-                if 'additions' in df.columns and 'deletions' in df.columns:
-                    generate_author_code_line_chart(df)
-                else:
-                    st.info("无法显示代码行数图表：缺少必要的数据列")
+                _chart_card("开发者变更行数", "绿色=新增 · 红色=删除")
+                generate_delta_chart(df, "author")
+                _chart_card_end()
 
     mr_columns = [
         "project_name", "author", "source_branch", "target_branch", "updated_at",
@@ -721,13 +549,7 @@ def main_page():
         "summary": "审查摘要",
         "url": st.column_config.LinkColumn("PR 链接", max_chars=100, display_text="打开"),
     }
-    display_data(
-        mr_tab,
-        ReviewService().get_mr_review_logs,
-        mr_columns,
-        mr_column_config,
-        has_url=True,
-    )
+    display_data(mr_tab, ReviewService().get_mr_review_logs, mr_columns, mr_column_config, has_url=True)
 
     if show_push_tab:
         push_columns = [
@@ -743,16 +565,9 @@ def main_page():
             "kind_label": "类型",
             "summary": "审查摘要",
         }
-        display_data(
-            push_tab,
-            ReviewService().get_push_review_logs,
-            push_columns,
-            push_column_config,
-            has_url=False,
-        )
+        display_data(push_tab, ReviewService().get_push_review_logs, push_columns, push_column_config, has_url=False)
 
 
-# 应用入口
 if check_login_status():
     main_page()
 else:
