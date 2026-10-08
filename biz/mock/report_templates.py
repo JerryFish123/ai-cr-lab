@@ -79,6 +79,14 @@ def _pick_paths(rng: random.Random, stack: str, project: str, topic: str, n: int
     return picked
 
 
+def _sample(rng: random.Random, pool: list[str], k_min: int, k_max: int) -> list[str]:
+    if not pool:
+        return []
+    hi = min(k_max, len(pool))
+    lo = min(k_min, hi)
+    return rng.sample(pool, k=rng.randint(lo, hi))
+
+
 def _bullets(lines: list[str]) -> str:
     return "\n".join(f"- {ln}" for ln in lines)
 
@@ -136,7 +144,7 @@ def _covered_items(
         f"PRD {prd_sec}.6 软删除：删除为 status=DELETED，列表默认过滤，与 PRD 数据保留策略一致",
         f"PRD {prd_sec}.6 并发：更新带 version 字段乐观锁，冲突返回 409",
     ]
-    return rng.sample(pool, k=rng.randint(5, 8))
+    return _sample(rng, pool, 5, 8)
 
 
 def _uncovered_items(
@@ -159,7 +167,54 @@ def _uncovered_items(
         f"PRD {prd_sec}.11 消息通知：状态变更后应触发 MQ 事件，当前仅写库未 publish",
         f"PRD {prd_sec}.11 回滚：PRD 要求提供 admin 回滚入口，未见实现",
     ]
-    return rng.sample(pool, k=rng.randint(3, 6))
+    return _sample(rng, pool, 3, 6)
+
+
+def _code_review_notes(
+    rng: random.Random, *, tt: str, paths: list[str], stack: str, project_name: str
+) -> list[str]:
+    positives = [
+        f"分层清晰：Controller → Service → Repository 职责边界明确，符合 `{project_name}` 现有规范",
+        f"{_line(paths[2], rng.randint(15, 55))} 异常统一映射为业务错误码，便于前端处理",
+        f"DTO 校验注解完整（`@NotNull` / `@Size` / `@Pattern`），入参防御较好",
+        f"单测命名 `{tt}ServiceTest#shouldReturnEmptyWhenNoMatch` 语义清晰，Given-When-Then 结构可读",
+        f"Git diff 中删除 dead code / 未使用 import，减少维护负担",
+    ]
+    nits = [
+        f"{_line(paths[1], rng.randint(70, 160))} 建议提取 `{tt}Validator` 复用校验逻辑",
+        f"{_line(paths[0], rng.randint(25, 90))} 魔法字符串 `{rng.choice(['ACTIVE', 'PENDING', 'DRAFT'])}` 建议枚举化",
+        f"部分方法 Javadoc 缺失 `@param` / `@return` 说明",
+        f"Commit 粒度偏大（{rng.randint(8, 18)} files），建议按「接口 / 单测 / i18n」拆分便于 review",
+        f"日志级别不一致：部分 debug 信息用 info 输出，生产环境可能噪音过大",
+    ]
+    if stack == "frontend":
+        positives.append(f"`{paths[2]}` 使用 React.memo + useMemo 避免不必要重渲染")
+        nits.append(f"{_line(paths[0], 1)} 组件超过 200 行，建议拆 Container/Presentational")
+    return _sample(rng, positives, 2, 3) + _sample(rng, nits, 2, 3)
+
+
+def _compliance_items(rng: random.Random, *, market: str, paths: list[str]) -> list[str]:
+    pool = [
+        f"PII 字段（phone/email）在 {_line(paths[3], rng.randint(20, 60))} 响应中已脱敏，符合 GDPR 最小披露",
+        f"审计日志 retention 180 天，与合规要求一致",
+        f"用户数据导出接口需记录 consent 版本号，当前未见 `consentVersion` 字段",
+        f"跨境数据：{market} 用户数据存储 region 未在配置中显式声明",
+        f"Cookie / Session 过期时间与安全策略文档一致（24h sliding）",
+        f"删除接口为软删除 + 定时物理 purge，符合数据保留政策",
+    ]
+    return _sample(rng, pool, 3, 5)
+
+
+def _follow_up_actions(rng: random.Random, *, tt: str, completion: int) -> list[str]:
+    pool = [
+        f"创建 JIRA `{rng.choice(['ENG', 'PROD', 'QA'])}-{rng.randint(1200, 4890)}` 跟踪未覆盖 P0 项",
+        f"与 PM 确认 PRD {rng.randint(7, 11)}.{rng.randint(1, 3)} 是否本迭代 scope",
+        f"安排 `{tt}` 模块 on-call 同学做灰度发布值班",
+        f"更新 Confluence 运行手册：新增 env `FEATURE_{tt.upper()}_ENABLED`",
+        f"合并后 24h 内观察 Grafana `{tt}_api_latency_p99` 与 error_rate 面板",
+        f"若完成度 {completion}% 未达发布门槛，建议 hold merge 至 follow-up PR 合入",
+    ]
+    return _sample(rng, pool, 3, 4)
 
 
 def _test_suggestions(rng: random.Random, *, tt: str, paths: list[str], stack: str) -> list[str]:
@@ -175,7 +230,7 @@ def _test_suggestions(rng: random.Random, *, tt: str, paths: list[str], stack: s
     ]
     if stack == "frontend":
         pool.append(f"Storybook：补 `{paths[2]}` 空态/错误态/loading 三态截图")
-    return rng.sample(pool, k=rng.randint(4, 6))
+    return _sample(rng, pool, 4, 6)
 
 
 def _blast_items(rng: random.Random, *, topic: str, paths: list[str], project_name: str) -> list[str]:
@@ -192,7 +247,7 @@ def _blast_items(rng: random.Random, *, topic: str, paths: list[str], project_na
         f"**前端路由** · 深链 `/orders/{topic}` 参数变更，旧 bookmark 可能 404",
         "未发现对鉴权链路、公共中间件或共享库的破坏性变更",
     ]
-    picked = rng.sample(pool, k=rng.randint(4, 7))
+    picked = _sample(rng, pool, 4, 7)
     if not any("未发现" in x for x in picked) and rng.random() < 0.25:
         picked.append("未发现其他模块的连锁影响")
     return picked
@@ -224,9 +279,9 @@ def _risk_items(rng: random.Random, *, paths: list[str], stack: str) -> str:
         high_sec.append(f"{_line(paths[6] if len(paths) > 6 else paths[0], 20)} 使用 dangerouslySetInnerHTML 渲染用户输入")
 
     parts = [
-        _sub_bullets("安全（高优先级）", rng.sample(high_sec, k=rng.randint(2, 4))),
-        _sub_bullets("性能", rng.sample(perf, k=rng.randint(3, 5))),
-        _sub_bullets("可靠性 / 可维护性", rng.sample(reliability, k=rng.randint(2, 4))),
+        _sub_bullets("安全（高优先级）", _sample(rng, high_sec, 2, 4)),
+        _sub_bullets("性能", _sample(rng, perf, 3, 5)),
+        _sub_bullets("可靠性 / 可维护性", _sample(rng, reliability, 2, 4)),
     ]
     return "\n\n".join(parts)
 
@@ -263,6 +318,12 @@ def build_with_prd_report(
             f"- 阻塞发布项：{blocking}\n"
             f"- 建议：未覆盖项中标记 **P0** 的需在合并前补齐或拆 follow-up PR"
         ),
+        _sub_bullets(
+            "代码审查要点（亮点 / 改进）",
+            _code_review_notes(rng, tt=tt, paths=paths, stack=stack, project_name=project_name),
+        ),
+        _sub_bullets("合规与数据治理", _compliance_items(rng, market=market, paths=paths)),
+        _sub_bullets("后续行动", _follow_up_actions(rng, tt=tt, completion=completion)),
     ]
     s1 = "\n\n".join(s1_parts)
 
@@ -280,6 +341,19 @@ def build_with_prd_report(
 def build_no_prd_report(rng: random.Random, *, stack: str, topic: str, project_name: str) -> str:
     paths = _pick_paths(rng, stack, project_name, topic, 6)
     tt = _topic_title(topic)
+    market = rng.choice(_MARKETS)
+
+    intro = _change_summary(
+        rng, stack=stack, topic=topic, project_name=project_name, paths=paths, market=market
+    )
+    scope_note = _sub_bullets(
+        "审查范围说明",
+        [
+            f"本次 MR 未关联 PRD 文档，审查基于 diff 语义推断与 `{project_name}` 历史约定",
+            f"无法做章节级覆盖度映射，以下按 **代码质量 / 安全 / 性能 / 可维护性** 维度输出",
+            f"建议作者补充需求链接或验收 checklist 后重新触发审查",
+        ],
+    )
 
     logic = [
         f"{_line(paths[0], rng.randint(30, 100))} 边界条件：`pageSize=0` / 负数未校验",
@@ -298,6 +372,8 @@ def build_no_prd_report(rng: random.Random, *, stack: str, topic: str, project_n
         f"{_line(paths[1], rng.randint(90, 200))} 同步 HTTP 未设超时，线程池可能被占满",
         f"{_line(paths[4], rng.randint(30, 90))} LIKE '%xxx%' 模糊查询无索引，数据量上升后全表扫描",
         f"批量接口未分批，单次可能加载过多 ID",
+        f"{_line(paths[0], rng.randint(50, 130))} 未使用分页游标，深翻页 offset 过大",
+        f"缓存穿透：热点 key 失效时无 singleflight 保护",
     ]
     maintain = [
         f"方法 `{tt}Service.process()` 超过 120 行，建议拆分",
@@ -307,10 +383,13 @@ def build_no_prd_report(rng: random.Random, *, stack: str, topic: str, project_n
 
     risk_body = "\n\n".join(
         [
-            _sub_bullets("代码逻辑", rng.sample(logic, k=rng.randint(3, 5))),
-            _sub_bullets("安全", rng.sample(security, k=rng.randint(3, 4))),
-            _sub_bullets("性能", rng.sample(perf, k=rng.randint(2, 4))),
-            _sub_bullets("可维护性", rng.sample(maintain, k=rng.randint(2, 3))),
+            intro,
+            scope_note,
+            _sub_bullets("测试与回归建议", _test_suggestions(rng, tt=tt, paths=paths, stack=stack)),
+            _sub_bullets("代码逻辑", _sample(rng, logic, 3, 5)),
+            _sub_bullets("安全", _sample(rng, security, 3, 4)),
+            _sub_bullets("性能", _sample(rng, perf, 2, 3)),
+            _sub_bullets("可维护性", _sample(rng, maintain, 2, 3)),
             _sub_bullets(
                 "建议",
                 [
@@ -350,10 +429,21 @@ def build_legacy_report(rng: random.Random, *, stack: str, topic: str, project_n
         "Commit message 与变更范围不完全匹配",
     ]
     score = rng.randint(58, 86)
+    market = rng.choice(_MARKETS)
+    summary = _sub_bullets(
+        "变更概览",
+        [
+            f"仓库 `{project_name}` · 模块 `{topic}` · 栈 `{stack}`",
+            f"改动文件 {rng.randint(3, 12)} 个（+{rng.randint(80, 650)}/-{rng.randint(10, 200)}）",
+            f"目标市场 {market}，涉及 API / 单测 / 配置变更",
+            f"审查模型：legacy 单段式输出（无 PRD 三段结构）",
+        ],
+    )
     return (
-        f"### 严重问题\n{_bullets(rng.sample(severe, k=rng.randint(4, 6)))}\n\n"
-        f"### 中等问题\n{_bullets(rng.sample(medium, k=rng.randint(3, 5)))}\n\n"
-        f"### 轻微问题\n{_bullets(rng.sample(minor, k=rng.randint(2, 4)))}\n\n"
+        f"{summary}\n\n"
+        f"### 严重问题\n{_bullets(_sample(rng, severe, 4, 6))}\n\n"
+        f"### 中等问题\n{_bullets(_sample(rng, medium, 3, 5))}\n\n"
+        f"### 轻微问题\n{_bullets(_sample(rng, minor, 2, 4))}\n\n"
         f"### 审查结论\n"
         f"- 变更涉及 **{project_name}** `{topic}` 模块，建议修复严重项后再合并\n"
         f"- 预估修复工作量：{rng.randint(2, 8)} 人日\n\n"
