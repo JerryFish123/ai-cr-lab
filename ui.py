@@ -38,17 +38,17 @@ C_BORDER = "#d7e0ea"
 C_ADD = "#34d399"
 C_DEL = "#f87171"
 
-# Zone tints (functional area backgrounds — not pure white)
-Z_FILTER_BG = ("#ecfdf5", "#f0fdfa")
-Z_METRIC_BGS = [
-    ("#ecfdf5", "#d1fae5"),  # teal — 总审查
-    ("#eff6ff", "#dbeafe"),  # blue — 项目数
-    ("#fff7ed", "#ffedd5"),  # amber — 行数
-    ("#f5f3ff", "#ede9fe"),  # violet — PRD
-]
-Z_CHART_BG = ("#f0f9ff", "#e0f2fe")
-Z_TABLE_BG = "#fffbeb"
-Z_DETAIL_BG = ("#fefce8", "#fef9c3")
+# Surfaces — slate/teal palette, avoid pure #fff
+BG_PAGE = "#d4dce6"
+BG_SURFACE = "#e6ecf3"
+BG_SURFACE_ALT = "#dce4ed"
+BG_INPUT = "#edf1f6"
+BORDER = "#b4c0cf"
+Z_FILTER_BG = (BG_SURFACE, BG_SURFACE_ALT)
+Z_METRIC_ACCENT = ["#0f766e", "#2563eb", "#d97706", "#7c3aed"]
+Z_CHART_BG = ("#e2e9f2", "#d8e2ec")
+Z_TABLE_BG = "#e4eaf2"
+Z_DETAIL_BG = (BG_SURFACE, BG_SURFACE_ALT)
 
 
 def set_global_font():
@@ -188,7 +188,7 @@ def _chart_figsize(n_rows: int) -> tuple[float, float]:
 
 
 def _style_chart_axes(ax, *, horizontal=False):
-    ax.set_facecolor("#f0f9ff")
+    ax.set_facecolor("#e2e9f2")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(C_BORDER)
@@ -217,11 +217,11 @@ def _annotate_hbars(ax, bars, fmt="{:.0f}"):
         )
 
 
-def _zone_band(label: str, zone: str, hint: str = ""):
-    hint_html = f'<span class="zone-hint">{hint}</span>' if hint else ""
+def _section_head(label: str, zone: str, hint: str = ""):
+    hint_html = f'<span class="section-hint">{hint}</span>' if hint else ""
     st.markdown(
-        f'<div class="zone-band zone-{zone}">'
-        f'<span class="zone-label">{label}</span>{hint_html}</div>',
+        f'<div class="section-head section-{zone}">'
+        f'<span class="section-label">{label}</span>{hint_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -303,156 +303,174 @@ st.markdown(
     #MainMenu {{visibility: hidden;}}
     header[data-testid="stHeader"] {{display: none !important;}}
     footer {{visibility: hidden;}}
-    div.block-container {{
-        padding-top: 0.75rem !important;
-        padding-bottom: 1.5rem !important;
-        max-width: 1200px;
-    }}
+
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"] {{ font-family: "Outfit", "Source Han Sans CN", sans-serif; }}
+    html, body, [class*="css"] {{ font-family: "Outfit", "Source Han Sans CN", sans-serif; color: #1e293b; }}
+
+    /* ── Page canvas (no pure white) ── */
+    .stApp, [data-testid="stAppViewContainer"], section[data-testid="stMain"] {{
+        background: {BG_PAGE} !important;
+    }}
     .main {{
         background:
-          radial-gradient(900px 420px at 100% -8%, rgba(20, 184, 166, 0.14), transparent 55%),
-          radial-gradient(700px 380px at 0% 20%, rgba(59, 130, 246, 0.08), transparent 50%),
-          linear-gradient(180deg, #eef2f7 0%, #e2e8f0 100%);
+          radial-gradient(820px 380px at 95% -5%, rgba(15, 118, 110, 0.10), transparent 58%),
+          radial-gradient(640px 320px at 0% 15%, rgba(51, 65, 85, 0.07), transparent 52%),
+          linear-gradient(180deg, {BG_PAGE} 0%, #c8d2de 100%) !important;
     }}
-    .stButton>button {{
-        background: linear-gradient(135deg, #0f766e, #0d9488);
-        color: white; border: none; border-radius: 10px; font-weight: 600;
+    div.block-container {{
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 1180px;
     }}
-    .stButton>button:hover {{ box-shadow: 0 4px 14px rgba(15, 118, 110, 0.25); }}
+    [data-testid="stVerticalBlock"] {{ gap: 0.35rem !important; }}
+    [data-testid="column"] {{ padding: 0 0.35rem !important; }}
 
-    /* ── Top header bar ── */
-    .dash-header-bar {{
-        background: linear-gradient(135deg, #0f766e 0%, #134e4a 55%, #115e59 100%);
-        border-radius: 14px; padding: 0.85rem 1.15rem; margin-bottom: 0.65rem;
-        box-shadow: 0 4px 18px rgba(15, 118, 110, 0.22);
-    }}
-    .dash-header-bar .name {{ font-size: 1.35rem; font-weight: 700; color: #f0fdfa; letter-spacing: -0.02em; }}
-    .dash-header-bar .tag {{ font-size: 0.8rem; color: #99f6e4; margin-top: 0.1rem; }}
-    a.pro-link {{
-        display: inline-flex; align-items: center; justify-content: center;
-        padding: 0.4rem 0.9rem; background: rgba(255,255,255,0.14); color: #ecfdf5 !important;
-        text-decoration: none; border-radius: 10px; font-size: 0.85rem; font-weight: 600;
-        border: 1px solid rgba(255,255,255,0.22);
-    }}
-    a.pro-link:hover {{ background: rgba(255,255,255,0.22); }}
-
-    /* ── Zone section bands ── */
-    .zone-band {{
-        display: flex; align-items: center; gap: 0.55rem;
-        padding: 0.45rem 0.75rem; border-radius: 10px 10px 0 0;
-        margin-top: 0.85rem; margin-bottom: 0;
-        font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em;
-    }}
-    .zone-band .zone-hint {{ font-weight: 500; font-size: 0.76rem; opacity: 0.85; margin-left: auto; }}
-    .zone-band.zone-filter {{ background: linear-gradient(90deg, #0f766e, #14b8a6); color: #ecfdf5; }}
-    .zone-band.zone-metrics {{ background: linear-gradient(90deg, #1e40af, #3b82f6); color: #eff6ff; }}
-    .zone-band.zone-charts {{ background: linear-gradient(90deg, #0369a1, #0ea5e9); color: #f0f9ff; }}
-    .zone-band.zone-records {{ background: linear-gradient(90deg, #b45309, #f59e0b); color: #fffbeb; }}
-
-    /* ── Filter panel (teal tint) ── */
-    .element-container:has(.zone-filter) + .element-container [data-testid="stVerticalBlockBorderWrapper"] {{
-        background: linear-gradient(145deg, {Z_FILTER_BG[0]} 0%, {Z_FILTER_BG[1]} 100%) !important;
-        border-color: #5eead4 !important;
-        border-top: none !important;
-        border-radius: 0 0 12px 12px !important;
-        padding: 0.75rem 0.9rem 0.5rem !important;
-        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.08);
-    }}
-
-    /* ── Metric cards (4 distinct tints) ── */
-    div[data-testid="stMetric"] {{
-        border-radius: 12px; padding: 0.55rem 0.75rem;
-        box-shadow: 0 2px 6px rgba(15,23,42,0.06);
-    }}
-    div[data-testid="stMetric"] label {{ font-size: 0.78rem !important; font-weight: 600 !important; }}
-    div[data-testid="stMetricValue"] {{ font-weight: 800 !important; font-size: 1.45rem !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetric"] {{
-        background: linear-gradient(135deg, {Z_METRIC_BGS[0][0]}, {Z_METRIC_BGS[0][1]});
-        border: 1px solid #6ee7b7;
-    }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetric"] label {{ color: #047857 !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] {{ color: #064e3b !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetric"] {{
-        background: linear-gradient(135deg, {Z_METRIC_BGS[1][0]}, {Z_METRIC_BGS[1][1]});
-        border: 1px solid #93c5fd;
-    }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetric"] label {{ color: #1d4ed8 !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"] {{ color: #1e3a8a !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetric"] {{
-        background: linear-gradient(135deg, {Z_METRIC_BGS[2][0]}, {Z_METRIC_BGS[2][1]});
-        border: 1px solid #fdba74;
-    }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetric"] label {{ color: #c2410c !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"] {{ color: #9a3412 !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetric"] {{
-        background: linear-gradient(135deg, {Z_METRIC_BGS[3][0]}, {Z_METRIC_BGS[3][1]});
-        border: 1px solid #c4b5fd;
-    }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetric"] label {{ color: #6d28d9 !important; }}
-    .element-container:has(.zone-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetricValue"] {{ color: #4c1d95 !important; }}
-
-    /* ── Chart panels (sky blue tint) ── */
-    .element-container:has(.zone-charts) ~ .element-container:has([data-testid="stVerticalBlockBorderWrapper"]) [data-testid="stVerticalBlockBorderWrapper"] {{
-        background: linear-gradient(180deg, {Z_CHART_BG[0]} 0%, {Z_CHART_BG[1]} 100%) !important;
-        border-color: #7dd3fc !important;
+    /* ── Surfaces & inputs ── */
+    div[data-testid="stVerticalBlockBorderWrapper"] {{
+        background: {BG_SURFACE} !important;
+        border-color: {BORDER} !important;
         border-radius: 12px !important;
-        padding: 0.65rem 0.85rem 0.45rem !important;
-        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.10);
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
     }}
-    .element-container:has(.zone-charts) ~ .element-container:has([data-testid="stVerticalBlockBorderWrapper"]) [data-testid="stVerticalBlockBorderWrapper"] p {{
-        color: #0c4a6e;
+    div[data-testid="stWidget"] label, label[data-testid="stWidgetLabel"] p {{
+        color: #475569 !important; font-weight: 600 !important; font-size: 0.82rem !important;
     }}
-    div[data-testid="stPyplotGlobalElement"] {{ margin-top: -0.25rem; padding-bottom: 0 !important; }}
+    input, textarea, [data-baseweb="select"] > div, [data-baseweb="input"] {{
+        background-color: {BG_INPUT} !important;
+        border-color: {BORDER} !important;
+        color: #1e293b !important;
+    }}
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] {{
+        background: #d6e8e4 !important; color: #0f5132 !important;
+    }}
+
+    .stButton>button {{
+        background: linear-gradient(135deg, #0f766e, #0d9488) !important;
+        color: #f0fdfa !important; border: none !important; border-radius: 10px !important;
+        font-weight: 600 !important; min-height: 2.4rem;
+    }}
+    .stButton>button:hover {{ box-shadow: 0 4px 12px rgba(15, 118, 110, 0.28); }}
+
+    /* ── Page header card ── */
+    .element-container:has(.page-header-marker) + .element-container [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(135deg, #1a3a36 0%, #0f766e 52%, #115e59 100%) !important;
+        border: 1px solid #0d9488 !important;
+        padding: 0.7rem 1rem 0.55rem !important;
+        margin-bottom: 0.35rem;
+    }}
+    .element-container:has(.page-header-marker) + .element-container [data-testid="stVerticalBlockBorderWrapper"] p,
+    .element-container:has(.page-header-marker) + .element-container [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stCaptionContainer"] p {{
+        color: #ccfbf1 !important;
+    }}
+    .element-container:has(.page-header-marker) + .element-container [data-testid="stVerticalBlockBorderWrapper"] p strong {{
+        color: #f0fdfa !important; font-size: 1.25rem !important;
+    }}
+    a.header-gh {{
+        display: flex; align-items: center; justify-content: center; height: 2.4rem;
+        background: rgba(255,255,255,0.12); color: #ecfdf5 !important;
+        text-decoration: none; border-radius: 10px; font-size: 0.85rem; font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.2); margin-top: 0.15rem;
+    }}
+
+    /* ── Section heads ── */
+    .section-head {{
+        display: flex; align-items: baseline; gap: 0.5rem;
+        margin: 1.1rem 0 0.4rem; padding: 0.42rem 0.7rem;
+        background: {BG_SURFACE_ALT}; border: 1px solid {BORDER};
+        border-left: 4px solid #0f766e; border-radius: 0 10px 10px 0;
+    }}
+    .section-head .section-label {{ font-size: 0.92rem; font-weight: 700; color: #1e293b; }}
+    .section-head .section-hint {{ font-size: 0.76rem; color: #64748b; margin-left: auto; }}
+    .section-head.section-metrics {{ border-left-color: #2563eb; }}
+    .section-head.section-charts {{ border-left-color: #0ea5e9; }}
+    .section-head.section-records {{ border-left-color: #d97706; }}
+
+    /* ── Filter panel ── */
+    .element-container:has(.section-filter) + .element-container [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(180deg, {Z_FILTER_BG[0]}, {Z_FILTER_BG[1]}) !important;
+        border-top: none !important; border-radius: 0 0 12px 12px !important;
+        padding: 0.65rem 0.85rem 0.55rem !important; margin-top: -0.45rem;
+    }}
+    .filter-range-note {{
+        display: flex; align-items: center; justify-content: flex-end;
+        height: 100%; padding-top: 1.55rem; font-size: 0.8rem; color: #64748b;
+    }}
+
+    /* ── Metrics ── */
+    div[data-testid="stMetric"] {{
+        background: {BG_SURFACE} !important;
+        border: 1px solid {BORDER} !important;
+        border-radius: 11px !important;
+        padding: 0.6rem 0.75rem !important;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.05);
+    }}
+    div[data-testid="stMetric"] label {{ color: #64748b !important; font-size: 0.76rem !important; }}
+    div[data-testid="stMetricValue"] {{ color: #0f172a !important; font-weight: 800 !important; font-size: 1.5rem !important; }}
+    .element-container:has(.section-metrics) + .element-container [data-testid="column"]:nth-child(1) [data-testid="stMetric"] {{
+        border-left: 4px solid {Z_METRIC_ACCENT[0]} !important;
+    }}
+    .element-container:has(.section-metrics) + .element-container [data-testid="column"]:nth-child(2) [data-testid="stMetric"] {{
+        border-left: 4px solid {Z_METRIC_ACCENT[1]} !important;
+    }}
+    .element-container:has(.section-metrics) + .element-container [data-testid="column"]:nth-child(3) [data-testid="stMetric"] {{
+        border-left: 4px solid {Z_METRIC_ACCENT[2]} !important;
+    }}
+    .element-container:has(.section-metrics) + .element-container [data-testid="column"]:nth-child(4) [data-testid="stMetric"] {{
+        border-left: 4px solid {Z_METRIC_ACCENT[3]} !important;
+    }}
+
+    /* ── Charts ── */
+    .element-container:has(.section-charts) ~ .element-container:has([data-testid="stVerticalBlockBorderWrapper"]) [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(180deg, {Z_CHART_BG[0]}, {Z_CHART_BG[1]}) !important;
+        border-color: {BORDER} !important;
+        padding: 0.55rem 0.8rem 0.4rem !important;
+    }}
+    div[data-testid="stPyplotGlobalElement"] {{ margin-top: -0.2rem; padding-bottom: 0 !important; }}
     div[data-testid="stPyplotGlobalElement"] img {{ display: block; width: 100%; height: auto; }}
 
-    /* ── Records table (warm amber tint) ── */
-    .element-container:has(.zone-records) + .element-container [data-testid="stDataFrame"] {{
-        border: 1px solid #fcd34d; border-radius: 0 0 12px 12px; overflow: hidden;
-        box-shadow: 0 2px 10px rgba(245, 158, 11, 0.10);
+    /* ── Table & expander ── */
+    .element-container:has(.section-records) + .element-container [data-testid="stDataFrame"] {{
+        border: 1px solid {BORDER}; border-radius: 0 0 12px 12px; overflow: hidden;
+        margin-top: -0.45rem;
     }}
-    .element-container:has(.zone-records) + .element-container [data-testid="stDataFrame"] > div {{
-        background: {Z_TABLE_BG};
+    .element-container:has(.section-records) + .element-container [data-testid="stDataFrame"] > div {{
+        background: {Z_TABLE_BG} !important;
     }}
-
-    /* ── Report expander (soft yellow) ── */
     div[data-testid="stExpander"] {{
         background: linear-gradient(180deg, {Z_DETAIL_BG[0]}, {Z_DETAIL_BG[1]}) !important;
-        border: 1px solid #fde047 !important; border-radius: 12px !important;
+        border: 1px solid {BORDER} !important; border-radius: 12px !important;
     }}
-    div[data-testid="stExpander"] summary {{ color: #854d0e !important; font-weight: 600; }}
+    div[data-testid="stExpander"] summary {{ color: #334155 !important; font-weight: 600; }}
 
     /* ── Tabs ── */
     [data-testid="stTabs"] {{
-        background: linear-gradient(180deg, #f0fdfa, #ccfbf1);
-        border: 1px solid #99f6e4; border-radius: 12px;
-        padding: 0.35rem 0.75rem 0.15rem; margin-bottom: 0.25rem;
+        background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 12px;
+        padding: 0.3rem 0.65rem 0.1rem; margin-bottom: 0.35rem;
     }}
-    [data-testid="stTabs"] button {{ font-weight: 600; color: #0f766e !important; }}
+    [data-testid="stTabs"] button {{ font-weight: 600; color: #475569 !important; }}
     [data-testid="stTabs"] [aria-selected="true"] {{
-        color: #134e4a !important; border-color: #0f766e !important;
-        background: rgba(255,255,255,0.55); border-radius: 8px 8px 0 0;
+        color: #0f766e !important; border-color: #0f766e !important;
+        background: {BG_INPUT} !important; border-radius: 8px 8px 0 0;
     }}
 
     .empty-panel {{
-        margin: 0.75rem 0; padding: 1.75rem 1rem; border: 1px dashed #94a3b8;
-        border-radius: 12px; background: linear-gradient(180deg, #f1f5f9, #e2e8f0); text-align: center;
+        margin: 0.75rem 0; padding: 1.5rem 1rem; border: 1px dashed {BORDER};
+        border-radius: 12px; background: {BG_SURFACE}; text-align: center;
     }}
-    .empty-panel h3 {{ margin: 0 0 0.35rem; color: #0c1222; font-size: 1.05rem; }}
-    .empty-panel p {{ margin: 0; color: #64748b; font-size: 0.9rem; }}
+    .empty-panel h3 {{ margin: 0 0 0.35rem; color: #1e293b; font-size: 1.02rem; }}
+    .empty-panel p {{ margin: 0; color: #64748b; font-size: 0.88rem; }}
 
     /* ── Login ── */
     .login-container {{
-        background: linear-gradient(160deg, #ecfdf5 0%, #f0fdfa 40%, #eff6ff 100%);
-        border: 1px solid #99f6e4; border-radius: 16px;
-        padding: 1rem; box-shadow: 0 10px 40px rgba(15,118,110,0.10);
+        background: linear-gradient(160deg, #dce8e6 0%, {BG_SURFACE} 45%, #dbe4ef 100%);
+        border: 1px solid {BORDER}; border-radius: 16px;
+        padding: 1.25rem; box-shadow: 0 8px 32px rgba(15,23,42,0.08);
     }}
-    .login-title {{ text-align: center; color: #134e4a; font-size: 2rem; font-weight: 700; }}
-    .login-sub {{ text-align: center; color: #64748b; font-size: 0.92rem; }}
+    .login-title {{ text-align: center; color: #134e4a; font-size: 1.85rem; font-weight: 700; }}
+    .login-sub {{ text-align: center; color: #64748b; font-size: 0.9rem; }}
     .platform-mark {{
-        text-align: center; font-size: 0.75rem; font-weight: 700;
-        letter-spacing: 0.16em; color: #0f766e; margin-top: 0.5rem;
+        text-align: center; font-size: 0.72rem; font-weight: 700;
+        letter-spacing: 0.14em; color: #0f766e; margin-top: 0.35rem;
     }}
     </style>
     """,
@@ -516,7 +534,7 @@ def _resolve_log_fetcher(use_mock: bool, *, kind: str):
 
 
 def _render_charts(df):
-    _zone_band("统计图表", "charts", "审查次数 · 变更行数")
+    _section_head("统计图表", "charts", "审查次数 · 变更行数")
     r1c1, r1c2 = st.columns(2, gap="medium")
     with r1c1:
         _render_chart_panel(
@@ -545,26 +563,25 @@ def _render_charts(df):
         )
 
 
-def main_page():
-    h1, h2 = st.columns([7, 3])
-    with h1:
-        st.markdown(
-            '<div class="dash-header-bar"><div class="name">ai-cr-lab</div>'
-            '<div class="tag">代码审查统计 · JerryFish123/ai-cr-lab</div></div>',
-            unsafe_allow_html=True,
-        )
-    with h2:
-        c1, c2 = st.columns(2)
-        with c1:
+def _render_page_header():
+    st.markdown('<span class="page-header-marker"></span>', unsafe_allow_html=True)
+    with st.container(border=True):
+        hc1, hc2, hc3 = st.columns([6, 2, 2], gap="small")
+        with hc1:
+            st.markdown("**ai-cr-lab**")
+            st.caption("代码审查统计 · JerryFish123/ai-cr-lab")
+        with hc2:
             if st.button("退出登录", key="logout_button", use_container_width=True):
                 logout()
-        with c2:
+        with hc3:
             st.markdown(
-                f'<div style="display:flex;justify-content:flex-end;padding-top:0.2rem;">'
-                f'<a href="{PRO_VERSION_URL}" target="_blank" class="pro-link">GitHub</a></div>',
+                f'<a href="{PRO_VERSION_URL}" target="_blank" class="header-gh">GitHub ↗</a>',
                 unsafe_allow_html=True,
             )
 
+
+def main_page():
+    _render_page_header()
     use_mock = _mock_mode_active()
 
     current_date = datetime.date.today()
@@ -582,9 +599,9 @@ def main_page():
 
     def display_data(tab, service_func, columns, column_config, *, has_url: bool):
         with tab:
-            _zone_band("筛选条件", "filter", "时间段 · 项目 · PRD · 风险")
+            _section_head("筛选条件", "filter", "时间段 · 项目 · PRD · 风险")
             with st.container(border=True):
-                fc1, fc2, fc3, fc4 = st.columns([2.2, 1.4, 1.4, 1.4])
+                fc1, fc2, fc3 = st.columns([2.4, 1.3, 1.3])
                 with fc1:
                     date_range = st.date_input(
                         "统计时间段",
@@ -605,14 +622,18 @@ def main_page():
                     authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
                 with fc3:
                     project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
+
+                fc4, fc5, fc6 = st.columns([1.3, 1.3, 2.4])
                 with fc4:
                     prd_filter = st.selectbox("PRD 状态", ["全部", "含PRD", "无PRD", "旧格式"], key=f"{tab}_prd_filter")
-
-                fc5, fc6 = st.columns([1.4, 2.6])
                 with fc5:
                     risk_filter = st.selectbox("风险状态", ["全部", "有风险", "无明显风险"], key=f"{tab}_risk_filter")
                 with fc6:
-                    st.caption(f"当前区间：**{start_date}** → **{end_date}**（共 {(end_date - start_date).days + 1} 天）")
+                    st.markdown(
+                        f'<div class="filter-range-note">区间 <strong>{start_date}</strong> → '
+                        f"<strong>{end_date}</strong> · {(end_date - start_date).days + 1} 天</div>",
+                        unsafe_allow_html=True,
+                    )
 
             df = filter_enriched_frame(
                 base_df,
@@ -622,8 +643,8 @@ def main_page():
                 risk_filter=risk_filter,
             )
 
-            _zone_band("核心指标", "metrics")
-            m1, m2, m3, m4 = st.columns(4)
+            _section_head("核心指标", "metrics")
+            m1, m2, m3, m4 = st.columns(4, gap="medium")
             total_records = len(df)
             project_count = int(df["project_name"].nunique()) if not df.empty else 0
             total_lines = (
@@ -651,7 +672,7 @@ def main_page():
 
             _render_charts(df)
 
-            _zone_band("审查记录", "records", "明细列表 · 报告下钻")
+            _section_head("审查记录", "records", "明细列表 · 报告下钻")
             display_cols = [
                 c
                 for c in [
