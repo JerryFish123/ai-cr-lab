@@ -30,7 +30,10 @@ def test_mock_has_ten_multilingual_projects():
     assert stacks == {"frontend", "test", "java", "python"}
 
 
-def test_mock_mr_dataset_rich_and_filterable():
+def test_mock_mr_dataset_rich_and_filterable(monkeypatch):
+    fixed_today = datetime.date(2026, 10, 8)
+    monkeypatch.setattr("biz.mock.dashboard_mock._mock_end_date", lambda: fixed_today)
+
     df = DashboardMockProvider.get_mr_review_logs()
     assert len(df) == 196
     assert df["project_name"].nunique() == 10
@@ -38,15 +41,18 @@ def test_mock_mr_dataset_rich_and_filterable():
     assert (df["additions"] >= 0).all()
     assert df["url"].str.startswith("https://github.com/").all()
 
+    start_ts = int(datetime.datetime(2025, 8, 1, 9, 0, 0).timestamp())
+    end_ts = int(datetime.datetime.combine(fixed_today, datetime.time(23, 59, 59)).timestamp())
+    assert df["updated_at"].min() >= start_ts
+    assert df["updated_at"].max() <= end_ts
+
     enriched = enrich_review_frame(df)
     kinds = set(enriched["kind"].unique())
     assert "with_prd" in kinds
     assert "no_prd" in kinds
     assert "legacy" in kinds
 
-    start = int(datetime.datetime(2025, 8, 1).timestamp())
-    end = int(datetime.datetime(2026, 10, 8, 23, 59, 59).timestamp())
-    scoped = DashboardMockProvider.get_mr_review_logs(updated_at_gte=start, updated_at_lte=end)
+    scoped = DashboardMockProvider.get_mr_review_logs(updated_at_gte=start_ts, updated_at_lte=end_ts)
     assert len(scoped) == len(df)
 
     one_proj = DashboardMockProvider.get_mr_review_logs(project_names=["ai-cr-test1"])
@@ -66,6 +72,28 @@ def test_mock_is_deterministic():
     DashboardMockProvider.reset_cache()
     b = DashboardMockProvider.get_mr_review_logs()
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_mock_same_date_range_returns_identical_rows(monkeypatch):
+    fixed_today = datetime.date(2026, 10, 8)
+    monkeypatch.setattr("biz.mock.dashboard_mock._mock_end_date", lambda: fixed_today)
+    start_ts = int(datetime.datetime(2025, 9, 1).timestamp())
+    end_ts = int(datetime.datetime(2025, 12, 31, 23, 59, 59).timestamp())
+
+    first = DashboardMockProvider.get_mr_review_logs(updated_at_gte=start_ts, updated_at_lte=end_ts)
+    second = DashboardMockProvider.get_mr_review_logs(updated_at_gte=start_ts, updated_at_lte=end_ts)
+    pd.testing.assert_frame_equal(first, second)
+
+    DashboardMockProvider.reset_cache()
+    third = DashboardMockProvider.get_mr_review_logs(updated_at_gte=start_ts, updated_at_lte=end_ts)
+    pd.testing.assert_frame_equal(first, third)
+    assert len(first) > 0
+
+
+def test_mock_default_end_date_is_today(monkeypatch):
+    fixed_today = datetime.date(2026, 6, 15)
+    monkeypatch.setattr("biz.mock.dashboard_mock._mock_end_date", lambda: fixed_today)
+    assert DashboardMockProvider.default_end_date() == fixed_today
 
 
 def test_mock_review_reports_are_substantial():

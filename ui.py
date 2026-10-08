@@ -644,11 +644,12 @@ def main_page():
     use_mock = _mock_mode_active()
 
     current_date = datetime.date.today()
-    start_default = (
-        DashboardMockProvider.default_start_date()
-        if use_mock
-        else current_date - datetime.timedelta(days=90)
-    )
+    if use_mock:
+        start_default = DashboardMockProvider.default_start_date()
+        end_default = DashboardMockProvider.default_end_date()
+    else:
+        start_default = current_date - datetime.timedelta(days=90)
+        end_default = current_date
     show_push_tab = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
 
     if show_push_tab:
@@ -662,13 +663,17 @@ def main_page():
             with st.container(border=True):
                 fc1, fc2, fc3 = st.columns([2.4, 1.3, 1.3])
                 with fc1:
-                    date_range = st.date_input(
-                        "统计时间段",
-                        value=(start_default, current_date),
-                        key=f"{tab}_date_range",
-                        help="一次选择起止日期",
-                    )
-                start_date, end_date = _parse_date_range(date_range, start_default, current_date)
+                    date_kw: dict = {
+                        "label": "统计时间段",
+                        "value": (start_default, end_default),
+                        "key": f"{tab}_date_range",
+                        "help": "一次选择起止日期",
+                    }
+                    if use_mock:
+                        date_kw["min_value"] = start_default
+                        date_kw["max_value"] = end_default
+                    date_range = st.date_input(**date_kw)
+                start_date, end_date = _parse_date_range(date_range, start_default, end_default)
                 start_ts = int(datetime.datetime.combine(start_date, datetime.time.min).timestamp())
                 end_ts = int(datetime.datetime.combine(end_date, datetime.time.max).timestamp())
 

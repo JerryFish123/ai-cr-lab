@@ -10,7 +10,9 @@ from biz.mock.report_templates import build_review_report
 
 # Project inception for ai-cr-lab ops (~first ECS deploy era)
 _MOCK_START = datetime.datetime(2025, 8, 1, 9, 0, 0)
-_MOCK_END = datetime.datetime(2026, 10, 8, 23, 59, 59)
+# Fixed day grid for timestamp slots — generation never depends on "today"
+_SLOT_LAST_DATE = datetime.date(2026, 10, 8)
+_SLOT_SPAN_DAYS = (_SLOT_LAST_DATE - _MOCK_START.date()).days
 _SEED = 20250801
 
 # 10 repos: 前端3 · 测试2 · Java3 · Python2 — multilingual slugs / labels
@@ -68,15 +70,40 @@ _COMMIT_MSGS = [
 
 _MARKETS = ["zh-CN", "en-US", "ja-JP", "de-DE", "es-ES", "fr-FR", "ko-KR"]
 
+_STREAM_MR = 0
+_STREAM_PUSH = 1
+
+
+def _mock_end_date() -> datetime.date:
+    return datetime.date.today()
+
+
+def _mock_start_ts() -> int:
+    return int(_MOCK_START.timestamp())
+
+
+def _mock_end_ts() -> int:
+    end = datetime.datetime.combine(_mock_end_date(), datetime.time(23, 59, 59))
+    return int(end.timestamp())
+
 
 def _ts(dt: datetime.datetime) -> int:
     return int(dt.timestamp())
 
 
-def _rand_ts(rng: random.Random, start: datetime.datetime, end: datetime.datetime) -> int:
-    delta = end - start
-    sec = rng.randint(0, max(int(delta.total_seconds()), 1))
-    return _ts(start + datetime.timedelta(seconds=sec))
+def _row_rng(index: int, stream: int) -> random.Random:
+    """Per-row RNG: same index + stream always yields identical field values."""
+    return random.Random(_SEED + stream * 10_000_000 + index)
+
+
+def _slot_datetime(index: int, *, stream: int) -> datetime.datetime:
+    """Deterministic timestamp from row index — independent of today's date."""
+    span = max(_SLOT_SPAN_DAYS, 1)
+    day_offset = (index * 17 + stream * 31) % (span + 1)
+    seconds = (index * 3607 + stream * 521) % 86400
+    day = _MOCK_START.date() + datetime.timedelta(days=day_offset)
+    base = datetime.datetime.combine(day, datetime.time.min)
+    return base + datetime.timedelta(seconds=seconds)
 
 
 def _pick_weighted(rng: random.Random, items: list[dict]) -> dict:
@@ -98,10 +125,13 @@ def _lines_for_stack(rng: random.Random, stack: str) -> tuple[int, int]:
     return rng.randint(30, 520), rng.randint(8, 240)
 
 
-def _build_mr_rows(rng: random.Random, n: int) -> list[dict]:
+def _build_mr_rows(n: int, *, stream: int = _STREAM_MR) -> list[dict]:
     rows: list[dict] = []
-    pr_counter: dict[str, int] = {p["name"]: rng.randint(20, 80) for p in PROJECTS}
-    for _ in range(n):
+    pr_counter: dict[str, int] = {
+        p["name"]: 20 + _row_rng(i, stream + 900).randint(0, 60) for i, p in enumerate(PROJECTS)
+    }
+    for i in range(n):
+        rng = _row_rng(i, stream)
         proj = _pick_weighted(rng, PROJECTS)
         name = proj["name"]
         stack = proj["stack"]
@@ -122,7 +152,7 @@ def _build_mr_rows(rng: random.Random, n: int) -> list[dict]:
                 "author": author,
                 "source_branch": source,
                 "target_branch": tgt,
-                "updated_at": _rand_ts(rng, _MOCK_START, _MOCK_END),
+                "updated_at": _ts(_slot_datetime(i, stream=stream)),
                 "commit_messages": msg,
                 "score": rng.randint(0, 100) if kind == "legacy" else None,
                 "url": f"https://github.com/{org}/{name}/pull/{pr_num}",
@@ -137,9 +167,10 @@ def _build_mr_rows(rng: random.Random, n: int) -> list[dict]:
     return rows
 
 
-def _build_push_rows(rng: random.Random, n: int) -> list[dict]:
+def _build_push_rows(n: int, *, stream: int = _STREAM_PUSH) -> list[dict]:
     rows: list[dict] = []
-    for _ in range(n):
+    for i in range(n):
+        rng = _row_rng(i, stream)
         proj = _pick_weighted(rng, PROJECTS)
         name = proj["name"]
         stack = proj["stack"]
@@ -155,7 +186,7 @@ def _build_push_rows(rng: random.Random, n: int) -> list[dict]:
                 "project_name": name,
                 "author": author,
                 "branch": branch,
-                "updated_at": _rand_ts(rng, _MOCK_START, _MOCK_END),
+                "updated_at": _ts(_slot_datetime(i, stream=stream)),
                 "commit_messages": msg,
                 "score": rng.randint(0, 100) if kind == "legacy" else None,
                 "review_result": build_review_report(
@@ -180,6 +211,8 @@ def _filter_frame(
     if df.empty:
         return df.copy()
     out = df
+    # Mock data only exists between project inception and today (inclusive).
+    out = out[(out["updated_at"] >= _mock_start_ts()) & (out["updated_at"] <= _mock_end_ts())]
     if authors:
         out = out[out["author"].isin(authors)]
     if project_names:
@@ -205,15 +238,13 @@ class DashboardMockProvider:
     @classmethod
     def _all_mr(cls) -> pd.DataFrame:
         if cls._mr_df is None:
-            rng = random.Random(_SEED)
-            cls._mr_df = pd.DataFrame(_build_mr_rows(rng, 196))
+            cls._mr_df = pd.DataFrame(_build_mr_rows(196, stream=_STREAM_MR))
         return cls._mr_df
 
     @classmethod
     def _all_push(cls) -> pd.DataFrame:
         if cls._push_df is None:
-            rng = random.Random(_SEED + 1)
-            cls._push_df = pd.DataFrame(_build_push_rows(rng, 58))
+            cls._push_df = pd.DataFrame(_build_push_rows(58, stream=_STREAM_PUSH))
         return cls._push_df
 
     @classmethod
@@ -230,12 +261,28 @@ class DashboardMockProvider:
         return _MOCK_START.date()
 
     @classmethod
+    def default_end_date(cls) -> datetime.date:
+        return _mock_end_date()
+
+    @classmethod
     def describe(cls) -> str:
         start = _MOCK_START.strftime("%Y-%m-%d")
-        end = _MOCK_END.strftime("%Y-%m-%d")
+        end = _mock_end_date().strftime("%Y-%m-%d")
+        visible_mr = len(
+            cls.get_mr_review_logs(
+                updated_at_gte=_mock_start_ts(),
+                updated_at_lte=_mock_end_ts(),
+            )
+        )
+        visible_push = len(
+            cls.get_push_review_logs(
+                updated_at_gte=_mock_start_ts(),
+                updated_at_lte=_mock_end_ts(),
+            )
+        )
         return (
             f"10 个项目（{cls.stack_summary()}）· {start} 至 {end} · "
-            f"{len(cls._all_mr())} 条 MR · {len(cls._all_push())} 条 Push"
+            f"{visible_mr} 条 MR · {visible_push} 条 Push"
         )
 
     @classmethod
