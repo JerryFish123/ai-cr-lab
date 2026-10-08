@@ -27,17 +27,18 @@ PROJECTS: list[dict] = [
     {"name": "datenpipeline-etl-py", "stack": "python", "weight": 11, "org": "JerryFish123"},
 ]
 
+# GitHub-style handles: Name + noun/animal + digits (same vibe as JerryFish123)
 AUTHORS = [
     "JerryFish123",
-    "chen.wei",
-    "wang.lei",
-    "zhang.yimin",
-    "liu.hao",
-    "zhao.xin",
-    "sun.qiang",
-    "maria.garcia",
-    "lucas.mueller",
-    "priya.sharma",
+    "MikeCat88",
+    "AmyCode42",
+    "JackFox99",
+    "LilyFish2024",
+    "LukeBear17",
+    "NinaWolf66",
+    "OscarHawk007",
+    "RubyDeer33",
+    "TonyShark2025",
 ]
 
 _MR_BRANCHES = [
