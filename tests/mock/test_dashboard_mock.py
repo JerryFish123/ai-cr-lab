@@ -66,3 +66,11 @@ def test_mock_is_deterministic():
     DashboardMockProvider.reset_cache()
     b = DashboardMockProvider.get_mr_review_logs()
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_mock_review_reports_are_substantial():
+    df = DashboardMockProvider.get_mr_review_logs()
+    assert df["review_result"].str.len().min() > 180
+    sample = df.iloc[0]["review_result"]
+    assert sample.count("- ") >= 3
+    assert "安全" in sample or "性能" in sample or "严重问题" in sample
